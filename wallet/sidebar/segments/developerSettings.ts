@@ -2,7 +2,7 @@ import { readDir } from "@spirobel/monero-wallet-api";
 import { html, flatten } from "../../../mininext/mininext";
 import { textInput } from "../ui/input";
 import { router } from "../router";
-import { sendWalletWipeEvent } from "../../../background/messagebus";
+
 import { currentlySelectedWallet } from "./walletRoute";
 let fileObjects: { filename: string; content: string; opened: boolean }[] = [];
 async function readFiles() {
@@ -25,7 +25,7 @@ async function wipeWalletCallback() {
   ) as HTMLInputElement | null;
   if (!wipeWallet) return;
   if (wipeWallet.value === "DELETE ALL FILES") {
-    sendWalletWipeEvent();
+    void window.wallets?.stopWorker();
     await deleteAllfiles();
     router.navigate("/onboarding");
     location.reload();
