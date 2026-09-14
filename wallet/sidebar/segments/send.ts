@@ -13,18 +13,18 @@ import { sendButtonDotStyles } from "./walletLower";
 import {
   connectedToNode,
   currentlySelectedWallet,
-  dismissToolInvocation,
 } from "./walletRoute";
-import { sendSendTransactionEvent } from "../../../background/messagebus";
 import type {
-  ParsedMoneroToolInvocation,
+  InvocationState,
   TxLog,
 } from "@spirobel/monero-wallet-api";
-import { latestToolInvocations } from "../../tools/toolInvocations";
+import { getToolUiByPermissions } from "@spirobel/monero-wallet-api";
 
 let parsedAmount: bigint | null = null;
 let amountInputValue = "";
+let addressInputValue = "";
 let justSentTx = false;
+let ignoredSpendId: string | null = null;
 export function parseAmountCallback() {
   const amountInput = document.getElementById(
     "amountInput",
@@ -38,11 +38,14 @@ export function walletUnlocked(): boolean {
   if (window.unlocked === undefined) return false;
   return window.unlocked;
 }
-let addressInputValue = "";
 let parsedAddress: ParseAddressError | ParsedAddress | null = null;
+function spendOpen(): InvocationState | null {
+  return (
+    window.wallets?.actionLogOpened?.getActiveByPermissions(["spend"])[0] ?? null
+  );
+}
 function sendButtonActive() {
-  const activeToolInvocations = latestToolInvocations();
-  const sendToolInvocation = activeToolInvocations["001"];
+  const open = spendOpen();
   const parsedAmountBiggerThanAvailable =
     (parsedAmount || 0n) > (currentlySelectedWallet()?.amount || 1n);
   return !!(
@@ -53,10 +56,10 @@ function sendButtonActive() {
     "address" in parsedAddress &&
     parsedAmount &&
     !justSentTx &&
-    sendToolInvocation?.tool.valid !== "invalid"
+    open?.valid !== "invalid"
   );
 }
-function sendCallback() {
+async function sendCallback() {
   if (
     sendButtonActive() &&
     parsedAddress &&
@@ -72,12 +75,16 @@ function sendCallback() {
       justSentTx = false;
     }, 2000);
 
-    sendSendTransactionEvent(
-      parsedAddress.address,
-      parsedAmount.toString(),
-      wallet_to_send_from_pa,
-    );
-    resetSendInputs();
+    const open = spendOpen();
+    const amountDisplay = convertBigIntAmount(parsedAmount);
+    if (open) {
+      await window.wallets?.actionLogOpened?.execute(open.invocationId, {
+        address: parsedAddress.address,
+        amount: amountDisplay,
+        wallet_to_send_from_pa,
+      });
+    }
+    await resetSendInputs();
   }
 }
 async function resetCallback() {
@@ -131,11 +138,11 @@ function setTXlogStatusMsg() {
   }
 }
 async function resetSendInputs() {
-  const activeToolInvocations = latestToolInvocations();
-  const sendToolInvocation = activeToolInvocations["001"];
-  const sendToolInvoId = sendToolInvocation?.tool.invocation_id;
-
-  if (sendToolInvoId) await dismissToolInvocation(sendToolInvoId);
+  const open = spendOpen();
+  if (open) {
+    ignoredSpendId = open.invocationId;
+    await window.wallets?.actionLogOpened?.dismiss(open.invocationId);
+  }
   const amountInput = document.getElementById(
     "amountInput",
   ) as HTMLInputElement | null;
@@ -165,7 +172,9 @@ export async function parseAddressCallback() {
   parsedAddress = await parseAddress(addressInput.value.trim());
   addressInputValue = addressInput.value;
 }
-export function validityMessage(t?: ParsedMoneroToolInvocation) {
+export function validityMessage(
+  t?: { valid?: string; no_check?: boolean } | null,
+) {
   if (!t) return "";
 
   if (t.valid === "invalid")
@@ -184,7 +193,7 @@ export function validityMessage(t?: ParsedMoneroToolInvocation) {
         address <br />
       </span>
     </div>`;
-  if (t.valid === "unverified")
+  if (t.no_check)
     return html`<div class="unverified-message">
       <span
         >this payment link skips destination checks, make sure you
@@ -193,9 +202,20 @@ export function validityMessage(t?: ParsedMoneroToolInvocation) {
     </div>`;
   return "";
 }
-export function toolInfo(t?: ParsedMoneroToolInvocation) {
+export function toolInfo(t?: InvocationState | null) {
   if (!t) return "";
-  const destinationLink = t[t.found_in];
+  const destinationLink =
+    t.found_in === "linkText" ? (t.linkText ?? t.link ?? "") : (t.link ?? "");
+  const contextDomain = t.context_domain ?? "";
+  const contextHref = t.context_href ?? "";
+  const destinationDomain = t.destination_domain ?? "";
+  const validClass = t.valid ?? "";
+  const clickedAt =
+    typeof t.timestamp === "string"
+      ? Date.parse(t.timestamp) || Date.now()
+      : (t.timestamp ?? Date.now());
+  const openTitle =
+    getToolUiByPermissions(["spend"])?.openTitle ?? "";
 
   return html`<div class="tool-info">
     <style>
@@ -264,43 +284,44 @@ export function toolInfo(t?: ParsedMoneroToolInvocation) {
         margin-bottom: 4px;
       }
     </style>
-    <span class="tool-label">payment link</span>
+    <span class="tool-label">${openTitle}</span>
     <div class="tool-row">
       <span class="tool-context">context:</span>
-      <span class="tool-value">${t.context_domain}</span>
+      <span class="tool-value">${contextDomain}</span>
     </div>
-    <a class="context-href grey-link" href=${t.context_href} target="_blank">
-      ${t.context_href}
+    <a class="context-href grey-link" href=${contextHref} target="_blank">
+      ${contextHref}
     </a>
     <div class="tool-row">
       <span class="tool-context">destination:</span>
-      <span class="tool-value ${t.valid}">${t.destination_domain}</span>
+      <span class="tool-value ${validClass}">${destinationDomain}</span>
     </div>
     <a
       class="destination-link grey-link"
-      style="cursor: not-allowed"
       href=${destinationLink}
+      target="_blank"
+      rel="noopener noreferrer"
     >
       ${destinationLink}
     </a>
     <div class="tool-row">
       <span class="tool-context">clicked:</span>
-      <span class="tool-value">${formatTime(t.timestamp)}</span>
+      <span class="tool-value">${formatTime(clickedAt)}</span>
     </div>
   </div> `;
 }
 
 export function sendPlateContent() {
-  const activeToolInvocations = latestToolInvocations();
-  const sendToolInvocation = activeToolInvocations["001"];
-  const toolPayload = sendToolInvocation?.tool.tool.payload;
-  const toolAmount =
-    toolPayload && "amount" in toolPayload
-      ? convertAmountBigInt(toolPayload.amount)
-      : null;
+  const raw = spendOpen();
+  if (raw && raw.invocationId !== ignoredSpendId) ignoredSpendId = null;
+  const open =
+    raw && raw.invocationId === ignoredSpendId ? null : raw;
+  const toolAmount = open?.amount
+    ? convertAmountBigInt(open.amount)
+    : null;
 
-  const toolInfoSnippet = toolInfo(sendToolInvocation?.tool);
-  const validitySnippet = validityMessage(sendToolInvocation?.tool);
+  const toolInfoSnippet = toolInfo(open);
+  const validitySnippet = validityMessage(open);
   const amountInput = document.getElementById(
     "amountInput",
   ) as HTMLInputElement | null;
@@ -311,7 +332,7 @@ export function sendPlateContent() {
       amountInput.value = amountInputValue;
       parseAmountCallback();
     }
-    if (toolAmount) {
+    if (toolAmount != null) {
       amountInputValue = convertBigIntAmount(toolAmount);
       amountInput.value = amountInputValue;
       parseAmountCallback();
@@ -327,8 +348,8 @@ export function sendPlateContent() {
     if (addressInput.value.length === 0 && addressInputValue.length > 0) {
       addressInput.value = addressInputValue;
     }
-    if (toolPayload && "address" in toolPayload) {
-      addressInputValue = toolPayload.address;
+    if (open?.address) {
+      addressInputValue = open.address;
       addressInput.value = addressInputValue;
       parseAddressCallback();
       addressInput.disabled = true;

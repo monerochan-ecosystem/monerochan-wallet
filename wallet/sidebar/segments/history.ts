@@ -7,6 +7,7 @@ import {
   convertBigIntAmount,
 } from "@spirobel/monero-wallet-api";
 import type { Pending, PrePendingTx } from "@spirobel/monero-wallet-api/";
+import { openActionLogPage } from "../../actionlog/open";
 const openDetails: Record<string, boolean | undefined> = {};
 function setOpenDetails(tx_hash: string) {
   const details = document.getElementById(
@@ -95,6 +96,19 @@ function txDetails(tx: FoundTransaction) {
     </div>
     ${sub_snippet} ${miner_snippet} ${pending_snippet} ${confirmed_snippet}
     ${destination_snippet}
+    ${invocationLink(tx.txlog?.invocationId, `log-${tx.tx_hash}`)}
+  </div>`;
+}
+
+function invocationLink(invocationId: string | undefined, domId: string) {
+  if (!invocationId) return html`<div></div>`;
+  const el = document.getElementById(domId);
+  if (el) el.onclick = () => openActionLogPage(invocationId);
+  return html`<div class="tx-detail">
+    <div>log:</div>
+    <div id="${domId}" style="cursor: pointer; text-decoration: underline;">
+      actionlog
+    </div>
   </div>`;
 }
 
@@ -132,6 +146,10 @@ function preTxDetails(tx: PrePendingTx) {
     </div>
 
     ${destination_snippet}
+    ${invocationLink(
+      tx.txlog?.invocationId,
+      `log-pre-${tx.inputs[0]?.index_on_blockchain ?? "x"}`,
+    )}
   </div>`;
 }
 function PrependingTxsList() {

@@ -16,7 +16,6 @@ import {
   safetyClickHandler,
   walletUpper,
 } from "./walletUpper";
-import { writeToolInvocationLog } from "../../tools/toolInvocations";
 import { walletRouteToString, type WalletRoute } from "@spirobel/seedphrase";
 
 declare global {
@@ -106,22 +105,4 @@ export function connectedToNode(): boolean {
 }
 
 
-export async function dismissToolInvocation(invocation_id: string) {
-  await writeToolInvocationLog((toolInvocationLog) => {
-    toolInvocationLog.forEach((v) => {
-      if (v.tool.invocation_id === invocation_id) {
-        v.dismissed = true;
-      }
-    });
-  });
-}
 
-export async function dismissToolInvocationByType(tool_id: "001" | "002") {
-  await writeToolInvocationLog((toolInvocationLog) => {
-    toolInvocationLog.forEach((v) => {
-      if (v.tool.tool.tool_id === tool_id) {
-        v.dismissed = true;
-      }
-    });
-  });
-}

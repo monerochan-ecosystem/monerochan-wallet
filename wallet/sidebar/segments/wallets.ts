@@ -1,7 +1,8 @@
 import {
   convertBigIntAmount,
+  getToolUiByPermissions,
   truncateDecimalString,
-  type ParsedMoneroToolInvocation,
+  type InvocationState,
   writeWalletToScanSettings,
   writeWalletSecretsToDotEnv,
   writeScanSettingsFileDefaultLocation,
@@ -9,32 +10,18 @@ import {
 import { flatten, html, type MiniHtmlString } from "../../../mininext/mininext";
 import { router } from "../router";
 import { rightLower, tactileContentPlate } from "../ui/content";
-import {
-  allWallets,
-  dismissToolInvocation,
-  navigateToFirstWallet,
-} from "./walletRoute";
-import {
-  latestToolInvocations,
-  type ToolInvocation,
-} from "../../tools/toolInvocations";
+import { allWallets, navigateToFirstWallet } from "./walletRoute";
 import {
   getWalletSecret,
   walletRouteFromString,
   walletRouteToString,
   type WalletRoute,
 } from "@spirobel/seedphrase";
-import {
-  clearFailedWalletRestoreData,
-  getFailedWalletRestoreData,
-  initWallets,
-} from "../init";
-import {
-  sendShareViewkeyEvent,
-  sendWalletSetupFinishedEvent,
-} from "../../../background/messagebus";
+import { initWallets } from "../init";
 import { textInput } from "../ui/input";
-let shareWalletToolInvocation: ToolInvocation | null | undefined = null;
+import { toggleActionLogPage } from "../../actionlog/open";
+let shareOpen: InvocationState | null = null;
+let shareBusyId: string | null = null;
 let openAdvancedOptions = false;
 let restoreRouteMessage: MiniHtmlString = html`<div></div>`;
 let removeRouteMessage: MiniHtmlString = html`<div></div>`;
@@ -70,7 +57,7 @@ async function removeWalletRouteHandler() {
       },
     });
     await initWallets();
-    sendWalletSetupFinishedEvent();
+    void window.wallets?.buildWallets();
     removeInput.value = "";
     navigateToFirstWallet();
   } else {
@@ -101,29 +88,36 @@ async function restoreWalletRouteHandler() {
 }
 
 export function walletsPlate() {
-  const activeToolInvocations = latestToolInvocations();
-  shareWalletToolInvocation = activeToolInvocations["002"];
+  const al = window.wallets?.actionLogOpened;
+  shareOpen = al?.getActiveByPermissions(["share_view"])[0] ?? null;
+  if (shareOpen?.invocationId !== shareBusyId) shareBusyId = null;
+  if (shareOpen?.lastType === "execute_error") shareBusyId = null;
+  const shareUi = getToolUiByPermissions(["share_view"]);
 
-  const failedWalletRestoreData = getFailedWalletRestoreData();
+  function shareWalletToolInfo(t?: InvocationState | null) {
+    if (!t) return "";
 
-  function shareWalletToolInfo(t?: ParsedMoneroToolInvocation) {
-    if (!t || t.tool.tool_id !== "002") return "";
-
-    const walletSlot = t.tool.payload.wallet_slot;
+    const walletSlot = t.wallet_slot ?? 0;
+    const contextDomain = t.context_domain ?? "";
+    const contextHref = t.context_href ?? "";
+    const clickedAt = t.timestamp ?? Date.now();
+    const openTitle = shareUi?.openTitle ?? "";
+    const acceptLabel = shareUi?.acceptLabel ?? "ACCEPT";
+    const dismissLabel = shareUi?.dismissLabel ?? "DISMISS";
 
     return html`<div>
       <div class="tool-info">
-        <span class="tool-label">view-only wallet share</span>
+        <span class="tool-label">${openTitle}</span>
         <div class="tool-row">
           <span class="tool-context">context:</span>
-          <span class="tool-value">${t.context_domain}</span>
+          <span class="tool-value">${contextDomain}</span>
         </div>
         <a
           class="context-href grey-link"
-          href=${t.context_href}
+          href=${contextHref}
           target="_blank"
         >
-          ${t.context_href}
+          ${contextHref}
         </a>
         <div class="tool-row">
           <span class="tool-context">wallet slot:</span>
@@ -131,82 +125,30 @@ export function walletsPlate() {
         </div>
         <div class="tool-row">
           <span class="tool-context">domain:</span>
-          <span class="tool-value">${t.context_domain}</span>
+          <span class="tool-value">${contextDomain}</span>
         </div>
         <div class="tool-row">
           <span class="tool-context">clicked:</span>
-          <span class="tool-value">${formatTime(t.timestamp)}</span>
+          <span class="tool-value">${formatTime(clickedAt)}</span>
         </div>
+        ${t.error
+          ? html`<div class="tool-hint">${t.error}</div>`
+          : ""}
         <div class="tool-actions">
-          <span class="tool-action" id="acceptShareWallet">ACCEPT</span>
-          <span class="tool-action" id="dismissShareWallet">DISMISS</span>
+          <span class="tool-action" id="acceptShareWallet">${acceptLabel}</span>
+          <span class="tool-action" id="dismissShareWallet">${dismissLabel}</span>
         </div>
       </div>
     </div>`;
   }
 
-  function failedWalletRestoreToolInfo() {
-    if (!failedWalletRestoreData) return "";
+  const hideBusy =
+    shareBusyId &&
+    shareOpen?.invocationId === shareBusyId &&
+    shareOpen.lastType !== "execute_error";
+  const toolInfoSnippet = shareWalletToolInfo(hideBusy ? null : shareOpen);
 
-    const t = failedWalletRestoreData.tool_invo;
-    if ("wallet_slot" in t.tool.payload === false) return "";
-    const walletSlot = t.tool.payload.wallet_slot;
-
-    return html`<div>
-      <div class="tool-info tool-info-error">
-        <span class="tool-label tool-label-error">Wallet Restore Failed</span>
-        <div class="tool-row">
-          <span class="tool-context">context:</span>
-          <span class="tool-value">${t.context_domain}</span>
-        </div>
-        <a
-          class="context-href grey-link"
-          href=${t.context_href}
-          target="_blank"
-        >
-          ${t.context_href}
-        </a>
-        <div class="tool-row">
-          <span class="tool-context">wallet slot:</span>
-          <span class="tool-value">${walletSlot}</span>
-        </div>
-        <div class="tool-row">
-          <span class="tool-context">domain:</span>
-          <span class="tool-value">${t.context_domain}</span>
-        </div>
-        <div class="tool-row">
-          <span class="tool-context">timestamp:</span>
-          <span class="tool-value">${formatTime(t.timestamp)}</span>
-        </div>
-        <div class="tool-hint">
-          Local primary address is not the same as the one stored in the
-          backend. This means seedphrase, offset passphrase or wallet route is
-          not the same as the wallet that first created and shared the viewkey
-          with the backend.
-        </div>
-        <div class="tool-actions">
-          <span
-            class="tool-action tool-action-dismiss"
-            id="dismissFailedRestore"
-            >DISMISS</span
-          >
-        </div>
-      </div>
-    </div>`;
-  }
-
-  async function dismissFailedRestoreHandler() {
-    await clearFailedWalletRestoreData();
-    await initWallets();
-    navigateToFirstWallet();
-  }
-
-  // dont show the 002 tool invocation info if there is an undismissed restore warning
-  const toolInfoSnippet = failedWalletRestoreData
-    ? ""
-    : shareWalletToolInfo(shareWalletToolInvocation?.tool);
-
-  if (shareWalletToolInvocation?.tool.invocation_id) {
+  if (shareOpen?.invocationId) {
     const dismissBtn = document.getElementById("dismissShareWallet");
     if (dismissBtn) {
       dismissBtn.onclick = dismissShareViewWalletTool;
@@ -214,13 +156,6 @@ export function walletsPlate() {
     const acceptBtn = document.getElementById("acceptShareWallet");
     if (acceptBtn) {
       acceptBtn.onclick = acceptShareViewWalletTool;
-    }
-  }
-
-  if (failedWalletRestoreData?.tool_invo.invocation_id) {
-    const dismissBtn = document.getElementById("dismissFailedRestore");
-    if (dismissBtn) {
-      dismissBtn.onclick = dismissFailedRestoreHandler;
     }
   }
 
@@ -239,6 +174,10 @@ export function walletsPlate() {
   const restoreBtn = document.getElementById("restoreWalletRouteBtn");
   if (restoreBtn) {
     restoreBtn.onclick = restoreWalletRouteHandler;
+  }
+  const logBtn = document.getElementById("openActionLog");
+  if (logBtn) {
+    logBtn.onclick = () => toggleActionLogPage();
   }
 
   const walletsList: () => MiniHtmlString = () => {
@@ -334,8 +273,9 @@ export function walletsPlate() {
           color: white;
         }
       </style>
-      ${shareWalletToolStyles} ${failedWalletRestoreToolInfo()}
-      ${toolInfoSnippet} ${walletsList()}
+      ${shareWalletToolStyles}
+      ${toolInfoSnippet}
+      ${walletsList()}
       <div style="margin-top: 15px; user-select: none;">
         <span id="openWalletsAdvancedOptionsButton">advanced options</span>
       </div>
@@ -385,6 +325,9 @@ export function walletsPlate() {
             </div>`
           : ""}
       </div>
+      <div style="margin-top: 12px;">
+        <span class="tool-action" id="openActionLog">actionlog</span>
+      </div>
     </div>`,
     rightLower,
     "top",
@@ -393,8 +336,10 @@ export function walletsPlate() {
   );
 }
 
-function formatTime(timestamp: number) {
-  const date = new Date(timestamp);
+function formatTime(timestamp: number | string) {
+  const date = new Date(
+    typeof timestamp === "string" ? Date.parse(timestamp) || Date.now() : timestamp,
+  );
   return date.toLocaleString(undefined, {
     year: "2-digit",
     month: "2-digit",
@@ -406,33 +351,30 @@ function formatTime(timestamp: number) {
 }
 
 async function dismissShareViewWalletTool() {
-  if (shareWalletToolInvocation?.tool.invocation_id)
-    return await dismissToolInvocation(
-      shareWalletToolInvocation.tool.invocation_id!,
-    );
+  if (shareOpen?.invocationId)
+    await window.wallets?.actionLogOpened?.dismiss(shareOpen.invocationId);
 }
 
 async function acceptShareViewWalletTool() {
-  if (!shareWalletToolInvocation?.tool.invocation_id) return;
-  if ("wallet_slot" in shareWalletToolInvocation.tool.tool.payload === false)
+  const open =
+    window.wallets?.actionLogOpened?.getActiveByPermissions(["share_view"])[0] ??
+    null;
+  if (!open?.invocationId) return;
+  if (shareBusyId === open.invocationId && open.lastType !== "execute_error")
     return;
-  const wallet_slot = String(
-    shareWalletToolInvocation.tool.tool.payload["wallet_slot"],
-  );
+  shareBusyId = open.invocationId;
+  const wallet_slot = String(open.wallet_slot ?? 0);
 
-  const t = shareWalletToolInvocation.tool;
   const walletRoute: WalletRoute = {
     identity: "main",
-    domain: t.context_domain,
+    domain: open.context_domain ?? "",
     wallet_type: "single" as const,
     wallet_slot,
   };
   const primary_address = await addWalletFromRoute(walletRoute);
   const viewkey = Bun.env[`vk${primary_address}`];
   if (!primary_address || !viewkey) return;
-  await dismissToolInvocation(t.invocation_id!);
-  sendShareViewkeyEvent({
-    tool_invo: t,
+  await window.wallets?.actionLogOpened?.execute(open.invocationId, {
     viewkey,
     primary_address,
   });
@@ -458,7 +400,7 @@ export async function addWalletFromRoute(walletRoute: WalletRoute) {
   });
 
   await initWallets();
-  sendWalletSetupFinishedEvent();
+  await window.wallets?.buildWallets();
   return primary_address;
 }
 
