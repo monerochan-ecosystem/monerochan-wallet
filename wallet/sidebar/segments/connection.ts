@@ -1,12 +1,11 @@
 import {
   get_info,
   readNodeUrlFromScanSettings,
-  writeNodeUrlToScanSettings,
 } from "@spirobel/monero-wallet-api";
 import { html, type MiniHtmlString } from "../../../mininext/mininext";
 import { leftLower, tactileContentPlate } from "../ui/content";
 import { integerInput, textInput } from "../ui/input";
-import { sendChangeNodeUrlStartHeightEvent } from "../../../background/messagebus";
+
 import { developerSettings } from "./developerSettings";
 import {
   connectedToNode,
@@ -88,7 +87,6 @@ async function resetNodeUrlHandler() {
 }
 async function saveNodeUrlHandler() {
   if (!nodeUrlInputValue) return;
-  await writeNodeUrlToScanSettings(nodeUrlInputValue);
   status_message = positiveStatusMessage("Node URL saved");
   test_result = "";
 
@@ -96,7 +94,7 @@ async function saveNodeUrlHandler() {
     await setCurrentStartingHeight(startHeightInputValue);
     status_message = positiveStatusMessage("Node URL, start height saved");
   }
-  sendChangeNodeUrlStartHeightEvent(nodeUrlInputValue);
+  void window.wallets?.changeNodeUrl(nodeUrlInputValue);
 }
 
 async function sendTestRequestHandler() {
