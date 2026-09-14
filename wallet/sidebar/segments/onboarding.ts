@@ -16,7 +16,7 @@ import {
   writeWalletToScanSettings,
 } from "@spirobel/monero-wallet-api";
 import { router } from "../router";
-import { sendWalletSetupFinishedEvent } from "../../../background/messagebus";
+
 import { navigateToFirstWallet } from "./walletRoute";
 
 let seedphrase: string[] = []; //generateSeedphrase().split(" ");
@@ -410,7 +410,7 @@ async function finishCB() {
       "blocksBufferFetchLoop",
     ],
   });
-  sendWalletSetupFinishedEvent();
+  void window.wallets?.buildWallets();
   router.navigate(walletRouteToString(WALLET_DEFAULT_ROUTE));
   location.reload();
 }
