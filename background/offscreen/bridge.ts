@@ -1,6 +1,4 @@
-import { receiveOpenSideBarEvent, type ExtensionMessage } from "../messagebus";
-
-//necessary for chrome because of its MV3 charade. Basically the same outcome as firefox with the background script
+// chrome MV3: offscreen document hosts the real background bundle
 let creating: null | Promise<void> = null;
 async function setupOffscreenDocument() {
   const existingContexts = await chrome.runtime.getContexts({
@@ -30,12 +28,13 @@ chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error) => console.error(error));
 
-chrome.runtime.onMessage.addListener((msg: ExtensionMessage, sender) => {
-  receiveOpenSideBarEvent(msg, async () => {
+// chrome: actionlog msg bus handling may run in offscreen document (openwallets results in mco with al instance);
+// sidebar open event has to be handled from this service worker. (sidepanel open only available here as per chrome rules)
+chrome.runtime.onMessage.addListener(
+  (msg: { kind?: string }, sender) => {
+    if (msg.kind !== "openSidebar") return;
     const windowId = sender.tab?.windowId;
     if (!windowId) return;
-    chrome.sidePanel.open({
-      windowId,
-    });
-  });
-});
+    chrome.sidePanel.open({ windowId });
+  },
+);
