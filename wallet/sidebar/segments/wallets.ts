@@ -500,6 +500,7 @@ function shareWalletToolStyles() {
         border: 2px solid rgba(255, 255, 255, 0.3);
         border-radius: 4px;
         padding: 2px 4px;
+        user-select: none;
       }
       .tool-action:hover {
         color: white;
