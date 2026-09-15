@@ -7,7 +7,7 @@
     "default_path": "sidebar.html"
   },
   "host_permissions": ["<all_urls>"],
-  "permissions": ["sidePanel", "unlimitedStorage", "offscreen"],
+  "permissions": ["sidePanel", "unlimitedStorage", "offscreen", "tabs"],
   "action": {
     "default_title": "monerochan wallet"
   },

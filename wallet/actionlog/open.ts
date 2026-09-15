@@ -1,36 +1,31 @@
-if (typeof chrome !== "undefined" && typeof browser === "undefined") {
-  (globalThis as unknown as { browser: typeof chrome }).browser = chrome;
-}
-
 export function actionLogPageUrl(invocationId?: string): string {
-  const rt = (
-    globalThis as unknown as {
-      browser?: { runtime?: { getURL: (p: string) => string } };
-    }
-  ).browser?.runtime;
-  const base = rt?.getURL("actionlog.html") ?? "actionlog.html";
+  const base = browser.runtime.getURL("actionlog.html");
   if (invocationId) return `${base}#/invo/${invocationId}`;
   return `${base}#/`;
 }
 
-const ACTION_LOG_WINDOW = "monerochan-actionlog";
-let actionLogWin: Window | null = null;
-
-export function toggleActionLogPage() {
-  if (actionLogWin && !actionLogWin.closed) {
-    actionLogWin.close();
-    actionLogWin = null;
-    return;
-  }
-  actionLogWin = window.open(actionLogPageUrl(), ACTION_LOG_WINDOW);
+async function actionLogTabs() {
+  const base = browser.runtime.getURL("actionlog.html");
+  return browser.tabs.query({ url: `${base}*` });
 }
 
-export function openActionLogPage(invocationId?: string) {
-  const url = actionLogPageUrl(invocationId);
-  if (actionLogWin && !actionLogWin.closed) {
-    actionLogWin.location.href = url;
-    actionLogWin.focus();
+export async function toggleActionLogPage() {
+  const open = await actionLogTabs();
+  const ids = open.map((t) => t.id).filter((id): id is number => id != null);
+  if (ids.length) {
+    await browser.tabs.remove(ids);
     return;
   }
-  actionLogWin = window.open(url, ACTION_LOG_WINDOW);
+  window.open(actionLogPageUrl());
+}
+
+export async function openActionLogPage(invocationId?: string) {
+  const url = actionLogPageUrl(invocationId);
+  const open = await actionLogTabs();
+  const id = open[0]?.id;
+  if (id != null) {
+    await browser.tabs.update(id, { url, active: true });
+    return;
+  }
+  window.open(url);
 }

@@ -7,7 +7,7 @@
     "default_panel": "sidebar.html",
     "default_title": "monerochan wallet"
   },
-  "permissions": ["<all_urls>", "unlimitedStorage"],
+  "permissions": ["<all_urls>", "unlimitedStorage", "tabs"],
   "background": {
     "scripts": ["background.js"],
     "type": "module",
