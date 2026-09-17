@@ -19,6 +19,7 @@ import type {
   TxLog,
 } from "@spirobel/monero-wallet-api";
 import { getToolUiByPermissions } from "@spirobel/monero-wallet-api";
+import { toggleActionLogPage } from "../../actionlog/open";
 
 let parsedAmount: bigint | null = null;
 let amountInputValue = "";
@@ -394,6 +395,10 @@ export function sendPlateContent() {
   if (resetBtn) {
     resetBtn.onclick = resetCallback;
   }
+  const logBtn = document.getElementById("openActionLog");
+  if (logBtn) {
+    logBtn.onclick = () => toggleActionLogPage();
+  }
 
   return html`<div class="send-plate-container">
     <div class="input-block">
@@ -418,6 +423,7 @@ export function sendPlateContent() {
           height: 100%;
           display: grid;
           grid-template-rows: 56px 1fr 40px;
+          position: relative;
         }
         .input-block {
           display: flex;
@@ -440,6 +446,24 @@ export function sendPlateContent() {
         .send-input-element::selection {
           background: #007bff;
         }
+        .tool-action {
+          box-shadow:
+            inset 0 4px 12px rgba(0, 0, 0, 0.45),
+            0 5px 8px rgba(0, 0, 0, 0.4);
+          position: absolute;
+          right: 8px;
+          bottom: 8px;
+          font-size: 14px;
+          cursor: pointer;
+          border: 2px solid rgba(255, 255, 255, 0.3);
+          border-radius: 4px;
+          padding: 2px 4px;
+          user-select: none;
+          width: fit-content;
+        }
+        .tool-action:hover {
+          color: white;
+        }
       </style>
 
       <input
@@ -451,6 +475,7 @@ export function sendPlateContent() {
       />
       <div class="parsed-address-message">${parsedAddressMessage}</div>
       ${toolInfoSnippet} ${validitySnippet}
+      <span class="tool-action" id="openActionLog">actionlog</span>
     </div>
     ${!connectedToNode()
       ? html`
