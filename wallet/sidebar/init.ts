@@ -80,6 +80,7 @@ function newestOpen(): InvocationState | null {
   return all[0] ?? null;
 }
 
+// a new tool call must show send or wallets plate so accept/dismiss btn + tool call info is on screen.
 function syncUiToOpen(open: InvocationState) {
   removeActive(lowerButtonIds);
   for (const perm of Object.keys(plateByPermission) as Array<
