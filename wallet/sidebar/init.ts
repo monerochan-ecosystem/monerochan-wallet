@@ -74,7 +74,7 @@ function openTimestamp(o: InvocationState): number {
 }
 
 function newestOpen(): InvocationState | null {
-  const all = log()?.getActive() ?? [];
+  const all = log()?.invocations("active") ?? [];
   if (!all.length) return null;
   all.sort((a, b) => openTimestamp(b) - openTimestamp(a));
   return all[0] ?? null;
