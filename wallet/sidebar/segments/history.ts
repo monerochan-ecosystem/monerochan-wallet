@@ -21,6 +21,40 @@ function setOpenDetails(tx_hash: string) {
     }
   }
 }
+function coinLines(
+  txlog: { inputs_index: string[]; payments: { amount: string }[] } | undefined,
+  inputs: { index_on_blockchain?: number; amount?: bigint }[] | undefined,
+) {
+  if (!txlog) return "";
+  let paySum = 0n;
+  const amounts: string[] = [];
+  for (const payment of txlog.payments) {
+    const atomic = BigInt(payment.amount || "0");
+    paySum += atomic;
+    if (atomic > 0n) amounts.push(convertBigIntAmount(atomic));
+  }
+  let inputSum = 0n;
+  for (const input of inputs ?? []) inputSum += input?.amount || 0n;
+  const change =
+    paySum > 0n && inputSum > paySum ? inputSum - paySum : 0n;
+  const outputText = amounts.length
+    ? amounts.join(", ")
+    : convertBigIntAmount(inputSum);
+  return html`<div>
+    <div class="tx-detail">
+      <div>inputs:</div>
+      <div style="color: white;">${txlog.inputs_index.join(", ")}</div>
+    </div>
+    <div class="tx-detail">
+      <div>outputs:</div>
+      <div style="color: white;">${outputText}</div>
+    </div>
+    <div class="tx-detail">
+      <div>change:</div>
+      <div style="color: white;">${convertBigIntAmount(change)}</div>
+    </div>
+  </div>`;
+}
 function txDetails(tx: FoundTransaction) {
   const sub_index = tx.outputs[0]?.subaddress_index;
   const sub_snippet = sub_index
@@ -51,25 +85,17 @@ function txDetails(tx: FoundTransaction) {
       </div>`
     : "";
 
-  const has_destination = tx.txlog?.payments?.length || 0 > 0;
-  const destination_snippet = has_destination
-    ? html`<div class="tx-detail">
-        <div>destination:</div>
-        <div style="color: white;" class="destination-address">
-          ${tx.txlog?.payments[0]?.address || ""}
-        </div>
-      </div>`
-    : "";
+  const coin_snippet = coinLines(tx.txlog, tx.inputs);
 
   return html`<div>
     <style>
       .tx-detail {
         display: grid;
-        grid-template-columns: 50px 158px;
+        grid-template-columns: 70px 150px;
         margin-top: 5px;
         margin-bottom: 4px;
         margin-left: 33px;
-        gap: 40px;
+        gap: 8px;
       }
       .tx-hash {
         width: 162px;
@@ -95,7 +121,7 @@ function txDetails(tx: FoundTransaction) {
       <div style="color: white;">${convertBigIntAmount(tx.amount)}</div>
     </div>
     ${sub_snippet} ${miner_snippet} ${pending_snippet} ${confirmed_snippet}
-    ${destination_snippet}
+    ${coin_snippet}
     ${invocationLink(tx.txlog?.invocationId, `log-${tx.tx_hash}`)}
   </div>`;
 }
@@ -113,15 +139,7 @@ function invocationLink(invocationId: string | undefined, domId: string) {
 }
 
 function preTxDetails(tx: PrePendingTx) {
-  const has_destination = tx.txlog?.payments?.length || 0 > 0;
-  const destination_snippet = has_destination
-    ? html`<div class="tx-detail">
-        <div>destination:</div>
-        <div style="color: white;" class="destination-address">
-          ${tx.txlog?.payments[0]?.address || ""}
-        </div>
-      </div>`
-    : "";
+  const coin_snippet = coinLines(tx.txlog, tx.inputs);
 
   return html`<div>
     <style>
@@ -145,7 +163,7 @@ function preTxDetails(tx: PrePendingTx) {
       <div class="tx-hash">${tx.self_spent ? "yes" : "no"}</div>
     </div>
 
-    ${destination_snippet}
+    ${coin_snippet}
     ${invocationLink(
       tx.txlog?.invocationId,
       `log-pre-${tx.inputs[0]?.index_on_blockchain ?? "x"}`,
