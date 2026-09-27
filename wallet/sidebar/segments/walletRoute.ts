@@ -38,6 +38,22 @@ export const walletRoute = (mini: Mini, params: WalletRouteParams) => {
   // with window.wallets
   attachHandlers(safetyButtonIds, safetyClickHandler);
   attachHandlers(lowerButtonIds, lowerClickHandler);
+  document.onkeydown = (ev) => {
+    const tag = (ev.target as HTMLElement | null)?.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+    if ((ev.target as HTMLElement | null)?.isContentEditable) return;
+    if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+    const plates: Record<string, LowerButtonId> = {
+      s: "send",
+      r: "receive",
+      h: "history",
+      c: "connection",
+      w: "wallets",
+    };
+    const plate = plates[ev.key.toLowerCase()];
+    if (!plate) return;
+    document.getElementById(lowerButtonIds[plate])?.click();
+  };
   return mini.html`
         <div class="main">
         <style>
