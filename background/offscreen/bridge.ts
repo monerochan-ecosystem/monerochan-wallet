@@ -24,6 +24,8 @@ async function setupOffscreenDocument() {
 
 chrome.runtime.onStartup.addListener(setupOffscreenDocument);
 chrome.runtime.onInstalled.addListener(setupOffscreenDocument);
+// chrome.runtime.reload fires neither of the above. 
+setupOffscreenDocument();
 chrome.sidePanel
   .setPanelBehavior({ openPanelOnActionClick: true })
   .catch((error) => console.error(error));
