@@ -1,10 +1,96 @@
-import { readDir } from "@spirobel/monero-wallet-api";
+import {
+  LOGGING_FUNCTIONS,
+  readDir,
+  type PossibleLogs,
+} from "@spirobel/monero-wallet-api";
 import { html, flatten } from "../../../mininext/mininext";
 import { textInput } from "../ui/input";
 import { router } from "../router";
 
 import { currentlySelectedWallet } from "./walletRoute";
 let fileObjects: { filename: string; content: string; opened: boolean }[] = [];
+let fileReadBusy = false;
+let lastFileRead = 0;
+const logLevels = ["off", "console", "file", "console-and-file"] as const;
+const selectedLogFns = new Set<string>();
+let logFnsReady = false;
+
+function rememberLogFns() {
+  if (logFnsReady) return;
+  logFnsReady = true;
+  for (const name of window.wallets?.logs_include ?? []) selectedLogFns.add(name);
+}
+
+let logSaveFlight: Promise<void> | null = null;
+let logSaveAgain = false;
+
+let chosenLogLevel: (typeof logLevels)[number] | null = null;
+
+function currentLogLevel(): (typeof logLevels)[number] {
+  if (chosenLogLevel) return chosenLogLevel;
+  const fromWallet = window.wallets?.logs;
+  if (
+    fromWallet &&
+    (logLevels as readonly string[]).includes(fromWallet)
+  ) {
+    chosenLogLevel = fromWallet;
+    return fromWallet;
+  }
+  return "off";
+}
+
+async function saveLogSettings() {
+  const logs = currentLogLevel();
+  const include = selectedLogFns.size
+    ? ([...selectedLogFns] as PossibleLogs[])
+    : null;
+  await window.wallets?.setLogSettings(logs, include, null);
+}
+
+function queueLogSave() {
+  if (logSaveFlight) {
+    logSaveAgain = true;
+    return;
+  }
+  logSaveFlight = saveLogSettings()
+    .catch(() => undefined)
+    .then(() => {
+      logSaveFlight = null;
+      if (!logSaveAgain) return;
+      logSaveAgain = false;
+      queueLogSave();
+    });
+}
+
+async function deleteLogFiles() {
+  const names = fileObjects
+    .filter((file) => file.filename.endsWith(".log"))
+    .map((file) => file.filename);
+  for (const name of names) await Bun.file(name).delete();
+  fileObjects = fileObjects.filter((file) => !file.filename.endsWith(".log"));
+  lastFileRead = 0;
+}
+
+function refreshFileList() {
+  const now = Date.now();
+  if (fileReadBusy || now - lastFileRead < 1000) return;
+  fileReadBusy = true;
+  lastFileRead = now;
+  const opened = new Set(
+    fileObjects.filter((file) => file.opened).map((file) => file.filename),
+  );
+  readFiles()
+    .then((files) => {
+      fileObjects = files.map((file) => ({
+        ...file,
+        opened: opened.has(file.filename),
+      }));
+      fileReadBusy = false;
+    })
+    .catch(() => {
+      fileReadBusy = false;
+    });
+}
 async function readFiles() {
   const files = [];
   const filenames = await readDir("");
@@ -67,85 +153,70 @@ function openFile(e: MouseEvent) {
     }
   }
 }
-async function regTestOneBlock() {
-  const wallet_address = currentlySelectedWallet()?.primary_address;
+let regtestNote = "";
+let regtestNoteTimer: ReturnType<typeof setTimeout> | undefined;
+function showRegtestNote(text: string) {
+  regtestNote = text;
+  if (regtestNoteTimer) clearTimeout(regtestNoteTimer);
+  regtestNoteTimer = setTimeout(() => {
+    regtestNote = "";
+  }, 10000);
+}
+async function generateblocks(amount_of_blocks: number, wallet_address?: string) {
   const node_url = currentlySelectedWallet()?.node_url;
   const payload = {
     jsonrpc: "2.0",
     id: "0",
     method: "generateblocks",
-    params: {
-      amount_of_blocks: 1,
-      wallet_address: wallet_address,
-    },
+    params: { amount_of_blocks, wallet_address },
   };
+  const response = await fetch(`${node_url}/json_rpc`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return response.json();
+}
+async function regTestOneBlock() {
+  const wallet_address = currentlySelectedWallet()?.primary_address;
   try {
-    const response = await fetch(`${node_url}/json_rpc`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const result = await response.json();
+    const result = await generateblocks(1, wallet_address);
     console.log(JSON.stringify(result, null, 2));
+    showRegtestNote(`mined 1 block, height ${result.result?.height ?? result.height}`);
   } catch (e) {
     console.error("Error:", e);
+    showRegtestNote("mine failed");
   }
 }
 async function regTest1000Block() {
-  const wallet_address =
-    "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr";
-  const node_url = currentlySelectedWallet()?.node_url;
-  const payload = {
-    jsonrpc: "2.0",
-    id: "0",
-    method: "generateblocks",
-    params: {
-      amount_of_blocks: 1000,
-      wallet_address: wallet_address,
-    },
-  };
   try {
-    const response = await fetch(`${node_url}/json_rpc`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const result = await response.json();
+    const result = await generateblocks(
+      1000,
+      "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr",
+    );
     console.log(JSON.stringify(result, null, 2));
+    showRegtestNote(`mined 1000 blocks, height ${result.result?.height ?? result.height}`);
   } catch (e) {
     console.error("Error:", e);
+    showRegtestNote("mine failed");
   }
 }
 async function regTest60Block() {
-  const wallet_address =
-    "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr";
-  const node_url = currentlySelectedWallet()?.node_url;
-  const payload = {
-    jsonrpc: "2.0",
-    id: "0",
-    method: "generateblocks",
-    params: {
-      amount_of_blocks: 60,
-      wallet_address: wallet_address,
-    },
-  };
   try {
-    const response = await fetch(`${node_url}/json_rpc`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    });
-    const result = await response.json();
+    const result = await generateblocks(
+      60,
+      "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr",
+    );
     console.log(JSON.stringify(result, null, 2));
+    showRegtestNote(`mined 60 blocks, height ${result.result?.height ?? result.height}`);
   } catch (e) {
     console.error("Error:", e);
+    showRegtestNote("mine failed");
   }
 }
 export function developerSettings() {
-  if (!fileObjects.length)
-    readFiles().then((files) => {
-      fileObjects = files;
-    });
+  rememberLogFns();
+  refreshFileList();
 
   const dirlist = fileObjects.map((file, i) => {
     const filename = document.getElementById(String(i)) as HTMLElement | null;
@@ -179,7 +250,7 @@ export function developerSettings() {
   });
   const dirElement = document.getElementsByClassName("filename");
   if (dirElement) {
-    for (const element of dirElement) {
+    for (const element of Array.from(dirElement)) {
       (element as HTMLElement).onclick = openFile;
     }
   }
@@ -209,6 +280,30 @@ export function developerSettings() {
   if (regTest1000BlockBtn) {
     regTest1000BlockBtn.onclick = regTest1000Block;
   }
+  for (const level of logLevels) {
+    const levelBtn = document.getElementById(`log-level-${level}`);
+    if (!levelBtn || levelBtn.onclick) continue;
+    levelBtn.onclick = () => {
+      chosenLogLevel = level;
+      queueLogSave();
+    };
+  }
+  for (const name of LOGGING_FUNCTIONS) {
+    const box = document.getElementById(
+      `log-fn-${name}`,
+    ) as HTMLInputElement | null;
+    if (!box || box.onchange) continue;
+    box.checked = selectedLogFns.has(name);
+    box.onchange = () => {
+      if (box.checked) selectedLogFns.add(name);
+      else selectedLogFns.delete(name);
+      queueLogSave();
+    };
+  }
+  const deleteLogs = document.getElementById("deleteLogFiles");
+  if (deleteLogs) deleteLogs.onclick = () => {
+    void deleteLogFiles();
+  };
   const regTest60BlockBtn = document.getElementById(
     "regtest60Block",
   ) as HTMLElement | null;
@@ -287,6 +382,15 @@ export function developerSettings() {
       .regtest-btn:hover {
         color: white;
       }
+      .log-level-on {
+        color: white;
+        border-color: rgba(255, 255, 255, 0.7);
+      }
+      .log-fn {
+        display: block;
+        margin-top: 4px;
+        color: white;
+      }
     </style>
     <div style="margin-top: 12px">
       Sharing the content of these files will result in the loss of your funds &
@@ -315,6 +419,41 @@ export function developerSettings() {
     </div>
     <div style="margin-bottom: 36px; margin-top: 12px">
       <span class="regtest-btn" id="regtest1000Block">regtest 1000 blocks</span>
+    </div>
+    ${regtestNote
+      ? html`<div style="margin-bottom: 12px">${regtestNote}</div>`
+      : ""}
+    <div style="margin-top: 12px">log level</div>
+    <div style="margin-top: 8px; margin-bottom: 12px">
+      ${
+        flatten(
+          logLevels.map(
+            (level) => html`<span
+              class="regtest-btn ${currentLogLevel() === level ? "log-level-on" : ""}"
+              id="log-level-${level}"
+              >${level}</span
+            >`,
+          ),
+        )
+      }
+    </div>
+    <div style="margin-top: 12px">
+      logged functions. no selection logs every function.
+    </div>
+    <div style="margin-top: 8px; margin-bottom: 12px">
+      ${
+        flatten(
+          LOGGING_FUNCTIONS.map(
+            (name) => html`<label class="log-fn">
+              <input type="checkbox" id="log-fn-${name}" />
+              ${name}
+            </label>`,
+          ),
+        )
+      }
+    </div>
+    <div style="margin-bottom: 24px">
+      <span class="regtest-btn" id="deleteLogFiles">delete log files</span>
     </div>
   </div>`;
 }

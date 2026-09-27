@@ -403,12 +403,7 @@ async function finishCB() {
   await writeWalletToScanSettings({
     primary_address,
     wallet_route: walletRouteToString(WALLET_DEFAULT_ROUTE),
-    logs: "console",
-    logs_include: [
-      "handleCpuboundScan",
-      "atomicWrite",
-      "blocksBufferFetchLoop",
-    ],
+    logs: "off",
   });
   void window.wallets?.buildWallets();
   router.navigate(walletRouteToString(WALLET_DEFAULT_ROUTE));
