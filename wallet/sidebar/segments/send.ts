@@ -1,5 +1,4 @@
 import {
-  atomicWrite,
   convertAmountBigInt,
   convertBigIntAmount,
   parseAddress,
@@ -7,9 +6,22 @@ import {
   type ParsedAddress,
 } from "@spirobel/monero-wallet-api";
 import { html, type MiniHtmlString } from "../../../mininext/mininext";
-import { actionButton } from "../ui/buttons";
+import { actionButton, removeActive } from "../ui/buttons";
 import { leftUpper, tactileContentPlate } from "../ui/content";
-import { sendButtonDotStyles } from "./walletLower";
+import {
+  addressPreviewLine,
+  coinControlIsOn,
+  coinControlSendReady,
+  coinControlView,
+  forceStandardMode,
+  noteStandardDraft,
+  resetCoinControl,
+  selectedAmountLine,
+  setSpendDismissHandler,
+  submitCoinControl,
+  takeReleasedDraft,
+} from "./coincontrol";
+import { lowerButtonIds, sendButtonDotStyles } from "./walletLower";
 import {
   connectedToNode,
   currentlySelectedWallet,
@@ -26,6 +38,11 @@ let amountInputValue = "";
 let addressInputValue = "";
 let justSentTx = false;
 let ignoredSpendId: string | null = null;
+// opening coin control retires the tool call through this handler
+setSpendDismissHandler(async (invocationId) => {
+  ignoredSpendId = invocationId;
+  await window.wallets?.actionLogOpened?.dismiss(invocationId);
+});
 export function parseAmountCallback() {
   const amountInput = document.getElementById(
     "amountInput",
@@ -46,6 +63,7 @@ function spendOpen(): InvocationState | null {
   );
 }
 function sendButtonActive() {
+  if (coinControlIsOn()) return coinControlSendReady(justSentTx);
   const open = spendOpen();
   const parsedAmountBiggerThanAvailable =
     (parsedAmount || 0n) > (currentlySelectedWallet()?.amount || 1n);
@@ -60,7 +78,27 @@ function sendButtonActive() {
     open?.valid !== "invalid"
   );
 }
+function markJustSent() {
+  justSentTx = true;
+  setTimeout(() => {
+    justSentTx = false;
+  }, 2000);
+}
 async function sendCallback() {
+  // safe side of the top slider. fire is the only side that may send.
+  if (!walletUnlocked()) return;
+  if (coinControlIsOn()) {
+    const open = spendOpen();
+    await submitCoinControl(
+      markJustSent,
+      async (invocationId) => {
+        ignoredSpendId = invocationId;
+        await window.wallets?.actionLogOpened?.dismiss(invocationId);
+      },
+      open?.invocationId ?? null,
+    );
+    return;
+  }
   if (
     sendButtonActive() &&
     parsedAddress &&
@@ -84,6 +122,17 @@ async function sendCallback() {
         amount: amountDisplay,
         wallet_to_send_from_pa,
       });
+    } else {
+      await window.wallets?.makeSignSend({
+        primary_address: wallet_to_send_from_pa,
+        payments: [
+          {
+            address: parsedAddress.address,
+            amount: parsedAmount.toString(),
+          },
+        ],
+        input_indexes: [],
+      });
     }
     await resetSendInputs();
   }
@@ -91,34 +140,21 @@ async function sendCallback() {
 async function resetCallback() {
   await resetSendInputs();
   justSentTx = false;
-  const timestamp = Date.now();
-  await atomicWrite(
-    "last-send-reset.json",
-    JSON.stringify({ timestamp }, null, 2),
-  );
-  lastReset = timestamp;
+  const pa = currentlySelectedWallet()?.primary_address;
+  if (pa) await window.wallets?.dismissSendPlate({ primary_address: pa });
   readLastTxLog();
 }
-async function readLastSendReset() {
-  const jsonString = await Bun.file("last-send-reset.json")
-    .text()
-    .catch(() => undefined);
-  return jsonString
-    ? (JSON.parse(jsonString) as { timestamp: number })
-    : undefined;
-}
 
-let lastReset: number | null = null;
 let last_tx_log: TxLog | null = null;
-async function readLastTxLog() {
-  if (lastReset === null)
-    lastReset = (await readLastSendReset())?.timestamp || 0;
-  const fetched_lastlog = currentlySelectedWallet()?.tx_logs.at(-1);
-  if (!fetched_lastlog) return;
-  if (fetched_lastlog.timestamp > lastReset) {
-    last_tx_log = fetched_lastlog;
-  } else {
-    last_tx_log = null;
+function readLastTxLog() {
+  const logs = currentlySelectedWallet()?.tx_logs ?? [];
+  last_tx_log = null;
+  for (let i = logs.length - 1; i >= 0; i--) {
+    const row = logs[i];
+    if (row && !row.hidden_on_send_plate) {
+      last_tx_log = row;
+      break;
+    }
   }
   setTXlogStatusMsg();
 }
@@ -139,6 +175,7 @@ function setTXlogStatusMsg() {
   }
 }
 async function resetSendInputs() {
+  resetCoinControl();
   const open = spendOpen();
   if (open) {
     ignoredSpendId = open.invocationId;
@@ -313,10 +350,25 @@ export function toolInfo(t?: InvocationState | null) {
 }
 
 export function sendPlateContent() {
+  const released = takeReleasedDraft();
+  if (released) {
+    amountInputValue = released.amount;
+    addressInputValue = released.address;
+    parsedAmount = released.amountAtomic;
+    parsedAddress = released.parsed;
+  }
+  noteStandardDraft({
+    amount: amountInputValue,
+    address: addressInputValue,
+    amountAtomic: parsedAmount,
+    parsed: parsedAddress,
+  });
   const raw = spendOpen();
   if (raw && raw.invocationId !== ignoredSpendId) ignoredSpendId = null;
   const open =
     raw && raw.invocationId === ignoredSpendId ? null : raw;
+  // a spend tool call arrived. switch to standard tx so the tool plate is visible
+  if (open && coinControlIsOn()) forceStandardMode();
   const toolAmount = open?.amount
     ? convertAmountBigInt(open.amount)
     : null;
@@ -356,37 +408,10 @@ export function sendPlateContent() {
       addressInput.disabled = true;
     }
   }
-  const parsedAmountMessage: string = parsedAmount
-    ? convertBigIntAmount(parsedAmount)
-    : "0.00";
   const parsedAmountBiggerThanAvailable =
     (parsedAmount || 0n) > (currentlySelectedWallet()?.amount || 1n)
       ? "exceeds unlocked funds"
       : "";
-  let parsedAddressMessage: MiniHtmlString | string = addressInputValue.length
-    ? html`<div style="user-select: none;">invalid address</div>`
-    : "";
-  if (parsedAddress && "address" in parsedAddress) {
-    if (toolInfoSnippet !== "") {
-      parsedAddressMessage = html`<div style="display: none;"></div>`;
-    } else {
-      parsedAddressMessage = html`<div>
-      <div style="user-select: none;">
-        destination address (${parsedAddress.network}):</div>
-        <div class="parsed-address">${parsedAddress.address}</div>
-        <style>
-          .parsed-address {
-            width: 245px;
-            word-wrap: break-word;
-            display: inline-block;
-            margin-top: 8px;
-            color: white;
-          }
-        </style>
-      </div>
-    </div>`;
-    }
-  }
   const sendBtn = document.getElementById("send-action") as HTMLButtonElement;
   if (sendBtn) {
     sendBtn.onclick = sendCallback;
@@ -399,35 +424,64 @@ export function sendPlateContent() {
   if (logBtn) {
     logBtn.onclick = () => toggleActionLogPage();
   }
+  const historyBtn = document.getElementById("openHistoryPlate");
+  if (historyBtn) {
+    historyBtn.onclick = () => {
+      removeActive(lowerButtonIds);
+      window.activeWalletPlate = lowerButtonIds.history;
+      const tab = document.getElementById(lowerButtonIds.history);
+      if (tab) tab.classList.add("active-switch");
+    };
+  }
 
+  const standardAmount = coinControlIsOn()
+    ? ""
+    : html`<div class="input-block">
+        <input
+          type="text"
+          id="amountInput"
+          class="send-input-element"
+          placeholder="Enter amount"
+        />
+        ${selectedAmountLine(parsedAmount, parsedAmountBiggerThanAvailable)}
+      </div>`;
+  const standardAddress = coinControlIsOn()
+    ? ""
+    : html`<div style="display: contents;">
+        <input
+          type="text"
+          id="addressInput"
+          class="send-input-element"
+          placeholder="Enter address"
+        />
+        ${addressPreviewLine(
+          addressInputValue,
+          parsedAddress,
+          toolInfoSnippet !== "",
+        )}
+      </div>`;
   return html`<div class="send-plate-container">
-    <div class="input-block">
-      <input
-        type="text"
-        id="amountInput"
-        name="amountInput"
-        class="send-input-element"
-        placeholder="Enter amount"
-      />
-      <div>
-        <span style="user-select: none;"> selected amount: </span>
-        <span style="color:white">${parsedAmountMessage}</span>
-        <span style="user-select: none; color: #e74c3c;"
-          >${parsedAmountBiggerThanAvailable}</span
-        >
-      </div>
-    </div>
+    ${standardAmount}
     <div class="input-block">
       <style>
         .send-plate-container {
           height: 100%;
-          display: grid;
-          grid-template-rows: 56px 1fr 40px;
+          min-height: 0;
+          overflow: hidden;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-start;
+          align-items: stretch;
           position: relative;
+        }
+        .connection-slot {
+          margin-top: auto;
         }
         .input-block {
           display: flex;
           flex-direction: column;
+          align-items: stretch;
+          justify-content: flex-start;
           gap: 8px;
         }
         .send-input-element {
@@ -446,13 +500,24 @@ export function sendPlateContent() {
         .send-input-element::selection {
           background: #007bff;
         }
+        .parsed-address {
+          width: 245px;
+          word-wrap: break-word;
+          display: inline-block;
+          margin-top: 8px;
+          color: white;
+        }
+        .tool-actions {
+          position: absolute;
+          right: 8px;
+          bottom: 46px;
+          display: flex;
+          gap: 6px;
+        }
         .tool-action {
           box-shadow:
             inset 0 4px 12px rgba(0, 0, 0, 0.45),
             0 5px 8px rgba(0, 0, 0, 0.4);
-          position: absolute;
-          right: 8px;
-          bottom: 8px;
           font-size: 14px;
           cursor: pointer;
           border: 2px solid rgba(255, 255, 255, 0.3);
@@ -466,25 +531,23 @@ export function sendPlateContent() {
         }
       </style>
 
-      <input
-        type="text"
-        id="addressInput"
-        name="addressInput"
-        class="send-input-element"
-        placeholder="Enter address"
-      />
-      <div class="parsed-address-message">${parsedAddressMessage}</div>
-      ${toolInfoSnippet} ${validitySnippet}
-      <span class="tool-action" id="openActionLog">actionlog</span>
+      ${standardAddress}
+      ${coinControlIsOn() ? "" : toolInfoSnippet}
+      ${coinControlIsOn() ? "" : validitySnippet}
+      ${coinControlView()}
+      <div class="tool-actions">
+        <span class="tool-action" id="openActionLog">actionlog</span>
+        <span class="tool-action" id="openHistoryPlate">history</span>
+      </div>
     </div>
     ${!connectedToNode()
       ? html`
-          <div>
+          <div class="connection-slot">
             <style>
               .connection-warning {
                 color: #e74c3c;
-                margin-top: 8px;
-                margin-bottom: 8px;
+                margin-top: 0;
+                margin-bottom: 0;
                 user-select: none;
               }
             </style>
