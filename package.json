@@ -4,6 +4,7 @@
     "zipchrome": "(cd dist/chrome && zip -r ../chrome.zip .)",
     "copyfirefoxmanifest": "cp manifest/firefox.json dist/firefox/manifest.json",
     "copychromemanifest": "cp manifest/chrome.json dist/chrome/manifest.json",
+    "copyicons": "mkdir -p dist/chrome/icons dist/firefox/icons && cp assets/icons/icon16.png assets/icons/icon32.png assets/icons/icon48.png assets/icons/icon96.png assets/icons/icon128.png dist/chrome/icons/ && cp assets/icons/icon16.png assets/icons/icon32.png assets/icons/icon48.png assets/icons/icon96.png assets/icons/icon128.png dist/firefox/icons/",
     "firefox:background": "bun build background/background.ts --outdir dist/firefox --target browser",
     "firefox:content": "bun build content/content.ts --outdir dist/firefox --target browser",
     "firefox:sidebar": "bun build wallet/sidebar.html --outdir dist/firefox --target browser",
@@ -15,7 +16,7 @@
     "chrome:sidebar": "bun build wallet/sidebar.html --outdir dist/chrome --target browser",
     "chrome:actionlog": "bun build wallet/actionlog.html --outdir dist/chrome --target browser",
     "buildchrome": "bun run chrome:background && bun run chrome:sw && bun run chrome:sidebar && bun run chrome:actionlog && bun run chrome:content",
-    "build": "bun run buildchrome && bun run copychromemanifest && bun run buildfirefox && bun run copyfirefoxmanifest",
+    "build": "bun run buildchrome && bun run copychromemanifest && bun run buildfirefox && bun run copyfirefoxmanifest && bun run copyicons",
     "clean": "rm -rf ./dist"
   },
   "devDependencies": {
