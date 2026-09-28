@@ -1,5 +1,7 @@
 # monerochan-wallet
 
+![chrome wallet](assets/chrome-store-1280x800.png)
+
 To install dependencies:
 
 ```bash
