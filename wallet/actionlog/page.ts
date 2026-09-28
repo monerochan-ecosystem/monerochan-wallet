@@ -61,7 +61,7 @@ function titleFor(row: { toolId?: string }) {
 const styles = html`<style>
   .log-page {
     max-width: 720px;
-    margin: 16px auto;
+    margin: 0 auto;
     padding: 0 16px 32px;
   }
   .log-title {
