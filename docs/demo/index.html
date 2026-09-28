@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>monerochan wallet feature tour</title>
+<style>
+  :root {
+    --ink: #1c1c1c;
+    --muted: #666;
+    --line: #e3e3e3;
+    --accent: #4a4358;
+    --bg: #fdfdfd;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 15px/1.55 -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: rgba(253,253,253,.92);
+    backdrop-filter: blur(4px);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 8px 16px;
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+    flex-wrap: wrap;
+  }
+  .bar .logo { font-weight: 700; font-size: 14px; letter-spacing: .2px; }
+  .bar nav { display: flex; gap: 14px; }
+  .bar nav a {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13.5px;
+    padding: 2px 4px;
+    border-bottom: 2px solid transparent;
+  }
+  .bar nav a:hover { color: var(--ink); }
+  .bar nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 24px 16px 80px;
+  }
+  h2 {
+    font-size: 22px;
+    margin: 40px 0 6px;
+    padding-top: 8px;
+    border-top: 1px solid var(--line);
+  }
+  h2:first-of-type { border-top: none; margin-top: 8px; }
+  .lede { color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
+  section { scroll-margin-top: 56px; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 14px 0;
+    display: grid;
+    grid-template-columns: minmax(0,1fr) 340px;
+    gap: 20px;
+    align-items: start;
+  }
+  .card.solo { grid-template-columns: minmax(0,1fr); }
+  .card h3 { margin: 0 0 6px; font-size: 16px; }
+  .card p { margin: 0 0 8px; }
+  .card p:last-child { margin-bottom: 0; }
+  .steps { margin: 6px 0 8px; padding-left: 18px; }
+  .steps li { margin: 2px 0; }
+  .note {
+    color: var(--muted);
+    font-size: 13.5px;
+    border-left: 3px solid var(--line);
+    padding-left: 10px;
+    margin-top: 8px;
+  }
+  code {
+    background: #f0eff2;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 13px;
+  }
+  .shots { display: flex; flex-wrap: wrap; gap: 12px; align-content: start; }
+  .shot { text-align: center; max-width: 340px; }
+  .shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    cursor: zoom-in;
+  }
+  .shot figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .player { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #111; }
+  .player video { display: block; width: 100%; height: auto; background: #111; }
+  .card.wide { grid-template-columns: 1fr; }
+  .player { position: relative; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #111; }
+  .player video { display: block; width: 100%; height: auto; background: #111; }
+  .ptoggle {
+    position: absolute; top: 10px; right: 10px; z-index: 5;
+    border: 1px solid rgba(255,255,255,.4); background: rgba(0,0,0,.55); color: #fff;
+    border-radius: 6px; padding: 4px 12px; cursor: pointer; font-size: 13px;
+  }
+  .ptoggle:hover { background: rgba(0,0,0,.8); }
+  .player.theatre {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(8, 8, 10, .97); border-radius: 0; border: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .player.theatre video {
+    width: auto; max-width: 94vw; max-height: 92vh; height: 92vh;
+    border-radius: 8px;
+  }
+  @media (max-width: 760px) {
+    .card { grid-template-columns: 1fr; }
+    .shot { max-width: 300px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <span class="logo">monerochan wallet</span>
+    <nav id="nav">
+      <a href="#tool-calls">tool calls</a>
+      <a href="#wallet">wallet</a>
+      <a href="#payment-links">payment links</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+<!-- ============================ TOOL CALLS ============================ -->
+<section id="tool-calls">
+  <h2>tool calls</h2>
+  <p class="lede">
+    A website asks the wallet to do something through a tool link. The page never
+    gets spend power. The wallet shows the request, and you decide. Tool
+    <code>001</code> asks to spend. Tool <code>002</code> asks to share a view-only
+    key. 
+  </p>
+
+  <div class="card wide">
+    <div>
+      <h3>pay with the browser wallet (tool 001)</h3>
+      <p>
+        On a checkout page, the payer clicks <em>pay with browser wallet</em>. The
+        content script blocks the navigation and sends the request to the wallet.
+        The send plate switches to the standard transaction view. The amount and the
+        address are filled in and locked. They come from the tool link:
+      </p>
+      <p>
+        <code>destination.tld/#monerochan001_amount_0.018060647654824902_address_4Jxz3bZeGQj9qZeWBd2XPyJCyNQaf...7h1</code>
+      </p>
+      <ol class="steps">
+        <li>click the pay link on the checkout page</li>
+        <li>the send plate opens with the <strong>payment link</strong> block: context site, destination site, amount, click time</li>
+        <li>move the safety slider to <strong>fire</strong></li>
+        <li>click <code>SEND</code> only if you want this payment sent</li>
+      </ol>
+      <p class="note">
+        The address check asks the link host whether it recognizes the address.
+        <em>valid</em> means the host claims it. It does not prove the shop
+        name, and the site checks the amount itself, later, by scanning the chain.
+        A new request always replaces the older open request of the same kind, so
+        two payment links never stack on the plate.
+      </p>
+    </div>
+    <div class="player" data-src="assets/tool-call.mp4">
+      <video src="assets/tool-call.mp4" muted preload="metadata" controls playsinline></video>
+      <button class="ptoggle" title="theatre mode">theatre</button>
+    </div>    </div>
+  </div>
+
+  <div class="card wide">
+    <div>
+      <h3>view-only wallet share (tool 002)</h3>
+      <p>
+        The merchant dashboard offers <em>Add Wallet</em>. Clicking it opens a share
+        request in the wallets plate. Accepting posts the view key to that site, so
+        it can watch incoming payments. It never gives the spend key. The
+        site still cannot move funds.
+      </p>
+      <ol class="steps">
+        <li>on the paymentlinks dashboard wallets page, click <em>Add Wallet</em></li>
+        <li>the wallets plate shows <strong>view-only wallet share</strong> with the slot number</li>
+        <li>click <code>ACCEPT</code> only if you want the view key posted to that site</li>
+        <li>click <code>DISMISS</code> to refuse</li>
+      </ol>
+      <p class="note">
+        The request is valid only when the page and the link belong to the same
+        site. The view key is posted to the link origin.
+      </p>
+      <p>
+        The shared wallet is derived from the seed for that slot and domain (see
+        <a href="#seed-derivation">seed derivation</a>).
+      </p>
+    </div>
+    <div class="player" data-src="assets/view-share.mp4">
+      <video src="assets/view-share.mp4" muted preload="metadata" controls playsinline></video>
+      <button class="ptoggle" title="theatre mode">theatre</button>
+    </div>    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>no wallet installed</h3>
+      <p>
+        A visitor who clicks a payment link without the extension does not get an
+        error page. The site serves a fallback that explains the missing wallet
+        and links the install page, with a way back to the checkout.
+      </p>
+    </div>
+    <div class="player" data-src="assets/no-wallet.mp4">
+      <video src="assets/no-wallet.mp4" muted preload="metadata" controls playsinline></video>
+      <button class="ptoggle" title="theatre mode">theatre</button>
+    </div>    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>action log</h3>
+      <p>
+        Every request is recorded with its state. The action log page lists the
+        newest five per page: what the site asked for, the amount, the time, and
+        whether it is in progress, done, failed, or dismissed. A failed send keeps
+        its error text. The tabs split the list into history, success, discarded,
+        and txlog, which shows every send attempt from the wallet cache. Open it
+        from the send plate or the wallets plate with the <code>actionlog</code>
+        control.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section id="wallet">
+  <h2>wallet</h2>
+  <p class="lede">
+    The wallet lives in the browser side panel. Balance on top, plates below.
+    Destructive actions are only possible when the safety slider is in the 
+    <strong>fire</strong> position. Treat the open wallet like a loaded gun.
+  </p>
+
+  <div class="card">
+    <div>
+      <h3>safety slider</h3>
+      <p>
+        The slider sits at the top. <strong>safe</strong> (left) locks sending:
+        both the normal send and coin control return immediately while the knob is
+        on safe, so a stray click on a website cannot move funds.
+        <strong>fire</strong> (right) arms the send buttons.
+      </p>
+      <ol class="steps">
+        <li>click <code>#safe</code> to lock, <code>#fire</code> to arm</li>
+        <li>the knob moves and <code>window.unlocked</code> flips</li>
+      </ol>
+      <p class="note">
+        The slider is the safety catch. It stays on safe so logging in to a website
+        can never send your life savings.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <video src="assets/slider.mp4" autoplay muted loop playsinline style="display:block;width:100%;border:1px solid var(--line);border-radius:8px;"></video>
+        <figcaption>safe, then fire, then safe</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>balance, amount and pending</h3>
+      <p>
+        The fire label shows the unlocked amount, the part a send can use. Under
+        it, a second line shows pending funds: received or change outputs that are
+        not spendable yet. Change from a send sits here until it unlocks.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/s-safe-1.png" target="_blank"><img src="assets/s-safe-1.png" alt="balance view" loading="lazy" /></a>
+        <figcaption>safe position, 34.982 XMR unlocked, 33.982 pending</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card wide">
+    <div>
+      <h3>keyboard shortcuts</h3>
+      <p>
+        Keys are the first letter of the target. In the wallet, <code>s</code> <code>r</code> <code>h</code>
+        <code>c</code> <code>w</code> open send, receive, history, connection, and
+        wallets. In the action log, <code>h</code> <code>s</code> <code>d</code>
+        <code>t</code> switch the history, success, discarded, and txlog tabs, and
+        the arrow keys turn pages. The page field jumps on every digit typed.
+      </p>
+    </div>
+    <div class="player" data-src="assets/shortcuts.mp4">
+      <video src="assets/shortcuts.mp4" muted preload="metadata" controls playsinline></video>
+      <button class="ptoggle" title="theatre mode">theatre</button>
+    </div>    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>standard send</h3>
+      <p>
+        The send plate has an amount field and an address field. Fill them, arm the
+        slider, press <code>SEND</code>. The panel only posts a message; the worker
+        picks the inputs, builds, signs, and relays. The line under
+        <code>SEND</code> shows the result of the last attempt.
+      </p>
+      <ol class="steps">
+        <li>click <code>SEND</code> in the lower menu to open the plate</li>
+        <li>fill the amount and the address</li>
+        <li>slider to <strong>fire</strong>, then click <code>SEND</code></li>
+        <li><code>RESET</code> hides the status line on this plate. History keeps the transaction</li>
+      </ol>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <video src="assets/sendtx.mp4" autoplay muted loop playsinline style="display:block;width:100%;border:1px solid var(--line);border-radius:8px;"></video>
+        <figcaption>empty form, then filled, then sent, then the success line</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/w02-send-standard.png" target="_blank"><img src="assets/w02-send-standard.png" alt="empty send plate" loading="lazy" /></a>
+        <figcaption>the empty send plate, slider on safe</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>coin control</h3>
+      <p>
+        Click <code>coin control</code> on the send plate to replace the simple
+        fields. You choose the inputs and the outputs yourself. The link turns into
+        <code>standard transaction</code>. Click it to go back.
+      </p>
+      <ol class="steps">
+        <li><strong>output rows</strong>: one row of amount + address to start, <em>add output</em> adds one, <em>remove</em> deletes a row (the first row too)</li>
+        <li><strong>select input</strong>: tick the outputs to spend; the worker spends exactly those</li>
+        <li><strong>external sweep</strong>: one destination address only, no amount field; it receives the selected inputs minus the fee. No selection sweeps every spendable input</li>
+        <li>a failed send that got as far as signing shows a <em>rebroadcast</em> control that relays the stored transaction</li>
+      </ol>
+      <p class="note">
+        Opening coin control retires an open payment-link request. The two
+        ways to configure a transaction never run at the same time.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <video src="assets/coincontrol.mp4" autoplay muted loop playsinline style="display:block;width:100%;border:1px solid var(--line);border-radius:8px;"></video>
+        <figcaption>open, then add output, then the input list, then tick, then sweep</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/f-cc-on.png" target="_blank"><img src="assets/f-cc-on.png" alt="coin control open" loading="lazy" /></a>
+        <figcaption>coin control open with one output row</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>receive</h3>
+      <p>
+        The receive plate shows the address a payer uses, with <em>NEW ADDRESS</em>
+        and <em>COPY</em>. Open a subaddress row to see its details. Those are all subaddresses. If you want to know the primary address you have to inspect the files in the developer settings in the connections plate.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/w04-receive.png" target="_blank"><img src="assets/w04-receive.png" alt="receive plate" loading="lazy" /></a>
+        <figcaption>receive plate</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/w05-receive-details.png" target="_blank"><img src="assets/w05-receive-details.png" alt="receive details" loading="lazy" /></a>
+        <figcaption>subaddress details open</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>history</h3>
+      <p>
+        The history plate lists every transaction, including sends hidden by
+        <code>RESET</code> on the send plate. <em>show details</em> opens the hash,
+        the inputs used, the output amounts, and the change.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/w06-history.png" target="_blank"><img src="assets/w06-history.png" alt="history plate" loading="lazy" /></a>
+        <figcaption>history list</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/w07-history-details.png" target="_blank"><img src="assets/w07-history-details.png" alt="history details" loading="lazy" /></a>
+        <figcaption>transaction details open</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>connection</h3>
+      <p>
+        The connection plate holds the node URL and the scan start height.
+        <em>TEST CONNECTION</em> queries the node before you trust it,
+        <em>SAVE</em> applies, <em>RESET</em> puts the fields back to the saved
+        values. An empty start height means the chain tip at save time; <code>0</code>
+        scans from the start.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/w08-connection.png" target="_blank"><img src="assets/w08-connection.png" alt="connection plate" loading="lazy" /></a>
+        <figcaption>connection plate</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/w09-connection-test.png" target="_blank"><img src="assets/w09-connection-test.png" alt="connection test result" loading="lazy" /></a>
+        <figcaption>get_info response success</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>developer settings</h3>
+      <p>
+        Under the connection plate. Export a backup (<code>wallets.json</code>,
+        contains secrets, click only if you want it on this computer), wipe
+        every wallet file by typing <code>DELETE ALL FILES</code> (canonical path to reset wallet), inspect the wallet files, and drive a local regtest node:
+        mine 1 block to this wallet, 60 blocks for confirmations, or 1000 blocks
+        for decoys.
+      </p>
+      <p class="note">
+        Log level (off / console / file / both) and the per-function log switches
+        sit in the same section. A new wallet starts with logging off; a level
+        change restarts the worker. The file list refreshes about once a second.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/w10-dev-top.png" target="_blank"><img src="assets/w10-dev-top.png" alt="developer settings" loading="lazy" /></a>
+        <figcaption>developer settings open</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/w11-dev-files.png" target="_blank"><img src="assets/w11-dev-files.png" alt="wallet files" loading="lazy" /></a>
+        <figcaption>wallet file list</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/w12-dev-regtest.png" target="_blank"><img src="assets/w12-dev-regtest.png" alt="regtest buttons and log controls" loading="lazy" /></a>
+        <figcaption>regtest mining and log controls</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>wallets</h3>
+      <p>
+        The wallets plate lists the saved wallet routes; the selected one is the
+        wallet send and receive use. <em>advanced options</em> opens
+        <em>Remove Wallet Route</em> and <em>Restore Wallet Route</em>.
+        Removing deletes the route and its cache files. Funds stay recoverable from the seed phrase, which rescans them.
+      </p>
+      <p class="note">
+        A catastrophic reorg (a node restart on regtest does this) replaces the top
+        area with a warning. Reset the wallet, then recover from the seed phrase or
+        generate a new one.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/w14-wallets.png" target="_blank"><img src="assets/w14-wallets.png" alt="wallets plate with advanced options" loading="lazy" /></a>
+        <figcaption>advanced options open</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/w15-wallets-advanced.png" target="_blank"><img src="assets/w15-wallets-advanced.png" alt="wallets plate" loading="lazy" /></a>
+        <figcaption>advanced options closed</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3 id="seed-derivation">seed derivation</h3>
+      <p>
+        One seed phrase backs every wallet. The secret comes from the phrase plus a
+        readable route (<em>identity/domain/wallet_type/wallet_slot</em>, default
+        <code>main/no_domain/single/0</code>). This is human readable similar to a URL.  It is not as cryptic as other derivation standards,
+         with the stated goal of fostering a more direct relation with the seedphrase and the wallet key material. Users should view the wallet not as black box, but
+         as a simple tool that helps them access the secrets that are understandably derived from the seed. The phrase runs
+        through the BIP39 seed function with the route, the offset passphrase, the
+        coin name, and the key type to derive the actual keypair in the wallet.
+      </p>
+      <p>
+        Readable routes keep each wallet in its context: a shared view key belongs
+        to one slot and one domain, so recovery cannot leak it to the wrong service.
+        One phrase also bundles the multisig escrow shares (<em>spend</em>,
+        <em>comms</em>, <em>hotkey</em>) under one route.
+
+        <a href="https://npmjs.com/package/@spirobel/seedphrase">more info</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================ PAYMENT LINKS ============================ -->
+<section id="payment-links">
+  <h2>payment links</h2>
+  <p class="lede">
+    The merchant side: a Bun server with a dashboard, checkout pages, and the two
+    endpoints the wallet talks to. Start it in production with
+    <code>bun run production</code>. It listens on
+    <code>http://localhost:3003</code>.
+  </p>
+
+  <div class="card">
+    <div>
+      <h3>login</h3>
+      <p>
+        The dashboard sits behind one admin password. The first start writes
+        <code>ADMIN_SECRET</code> into <code>.env</code>; use that value to log in.
+        The session cookie is HttpOnly, Secure, and SameSite=Strict.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/p00-login.png" target="_blank"><img src="assets/p00-login.png" alt="login page" loading="lazy" /></a>
+        <figcaption>admin login</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>dashboard</h3>
+      <p>
+        The dashboard lists wallets, transactions, and payment links. A link can be
+        a product (fixed stock) or an invoice (single use, with a due date). The
+        wallets page shows balances, sync heights, and the node URL setting.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/p02-dashboard.png" target="_blank"><img src="assets/p02-dashboard.png" alt="dashboard" loading="lazy" /></a>
+        <figcaption>payment links list</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/p03-dashboard-wallets.png" target="_blank"><img src="assets/p03-dashboard-wallets.png" alt="dashboard wallets" loading="lazy" /></a>
+        <figcaption>wallets page</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>link detail and checkout</h3>
+      <p>
+        Each link has a detail page with its <code>/pay/&hellip;</code> URL, amount,
+        type, and payment history. The checkout page makes one session and one
+        integrated address per visitor, shows the amount and a QR code, and offers
+        the browser-wallet button. The payment status frame polls until the scan
+        sees the output with enough confirmations.
+      </p>
+      <p class="note">
+        The site marks an invoice paid only after its own scan shows the output
+        with at least the requested amount and its confirmation count.
+      </p>
+    </div>
+    <div class="shots">
+      <figure class="shot">
+        <a href="assets/p04-link-detail.png" target="_blank"><img src="assets/p04-link-detail.png" alt="link detail" loading="lazy" /></a>
+        <figcaption>link detail</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/p01-checkout.png" target="_blank"><img src="assets/p01-checkout.png" alt="checkout" loading="lazy" /></a>
+        <figcaption>checkout page</figcaption>
+      </figure>
+      <figure class="shot">
+        <a href="assets/p05-paymentstatus.png" target="_blank"><img src="assets/p05-paymentstatus.png" alt="payment status" loading="lazy" /></a>
+        <figcaption>payment status frame</figcaption>
+      </figure>
+    </div>
+  </div>
+
+  <div class="card">
+    <div>
+      <h3>the two endpoints</h3>
+      <p>
+        <code>GET /monerochan001/&lt;address&gt;</code> answers
+        <code>{valid_address: true}</code> only while that address belongs to a live
+        checkout session. This is what makes a payment link read
+        <em>valid</em> in the wallet. <code>POST /monerochan002/</code> receives a
+        view-only key from the wallet so the site can scan. This only happens after
+        the same-site check passed. The site also checks the admin session on this POST and saves the view key only when that check passes. Direct link clicks without the extension land on
+        the install page, shown in the tool calls section above.
+      </p>
+    </div>
+    <div class="shots"></div>
+  </div>
+</section>
+</main>
+
+<script>
+  // highlight the active section in the sticky nav
+  const links = [...document.querySelectorAll("#nav a")];
+  const sections = links.map((a) => document.querySelector(a.getAttribute("href")));
+  const pick = () => {
+    const y = window.scrollY + 80;
+    let idx = 0;
+    sections.forEach((s, i) => { if (s && s.offsetTop <= y) idx = i; });
+    links.forEach((a, i) => a.classList.toggle("active", i === idx));
+  };
+  addEventListener("scroll", pick, { passive: true });
+  pick();
+</script>
+<script>
+  document.querySelectorAll(".player").forEach((p) => {
+    const btn = p.querySelector(".ptoggle");
+    btn.addEventListener("click", () => {
+      const on = p.classList.toggle("theatre");
+      btn.textContent = on ? "exit theatre" : "theatre";
+      if (on) document.body.style.overflow = "hidden";
+      else document.body.style.overflow = "";
+    });
+  });
+  addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    document.querySelectorAll(".player.theatre").forEach((p) => {
+      p.classList.remove("theatre");
+      p.querySelector(".ptoggle").textContent = "theatre";
+    });
+    document.body.style.overflow = "";
+  });
+</script>
+</body>
+</html>

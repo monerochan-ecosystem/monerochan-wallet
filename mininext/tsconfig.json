@@ -1,8 +1,7 @@
 {
-  "include": ["wallet/**/*", "background/**/*", "content/**/*"],
   "compilerOptions": {
     // Environment setup & latest features
-    "lib": ["ESNext", "DOM"],
+    "lib": ["ESNext"],
     "target": "ESNext",
     "module": "es2022",
     "moduleDetection": "force",
@@ -14,7 +13,7 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
-    "types": ["bun", "chrome"],
+
     // Best practices
     "strict": true,
     "skipLibCheck": true,
