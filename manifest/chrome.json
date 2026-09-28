@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "monerochan wallet",
-  "description": "Monerochan Wallet",
+  "description": "Monerochan Wallet. Still fresh. Use only small amounts for now.",
   "version": "0.1.1",
   "icons": {
     "16": "icons/icon16.png",
