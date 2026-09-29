@@ -139,7 +139,7 @@
     flex-direction: column;
     align-items: center;
     gap: 45px;
-    margin: 36px 0 115px;
+    margin: 150px 0 425px;
   }
   .art-link {
     display: block;
@@ -738,7 +738,7 @@
     root.style.scrollBehavior = "auto";
     const headerH = document.querySelector("header").offsetHeight;
     const maxY = Math.max(0, root.scrollHeight - window.innerHeight);
-    const lift = hash === "#get" ? 72 : 0;
+    const lift = hash === "#get" ? 220 : 0;
     const settle = Math.min(maxY, Math.max(0, section.offsetTop - headerH - lift));
     const past = Math.min(maxY, settle + 36);
     window.scrollTo({ top: past, behavior: "instant" });
