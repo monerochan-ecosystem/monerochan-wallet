@@ -32,3 +32,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# Local test node, chain data, and Brave profile.
+# Same role as test-data/ and tests/moneronode/ in monero-wallet-api.
+testdata/
