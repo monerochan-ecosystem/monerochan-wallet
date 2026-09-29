@@ -14,7 +14,7 @@
     --card: #ffffff;
   }
   * { box-sizing: border-box; }
-  html { scroll-behavior: smooth; }
+  html { scroll-behavior: auto; }
   body {
     margin: 0;
     background: var(--bg);
@@ -38,8 +38,7 @@
     gap: 18px;
     flex-wrap: wrap;
   }
-  .bar .logo { font-weight: 700; font-size: 14px; letter-spacing: .2px; }
-  .bar nav { display: flex; gap: 14px; }
+  .bar nav { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; user-select: none; }
   .bar nav a {
     color: var(--muted);
     text-decoration: none;
@@ -49,6 +48,15 @@
   }
   .bar nav a:hover { color: var(--ink); }
   .bar nav a.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .bar nav a.logo {
+    margin-right: 4px;
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: .2px;
+    color: var(--ink);
+  }
+  .bar nav a.logo:hover,
+  .bar nav a.logo.active { color: var(--accent); }
   main {
     max-width: 1080px;
     margin: 0 auto;
@@ -60,7 +68,7 @@
     padding-top: 8px;
     border-top: 1px solid var(--line);
   }
-  h2:first-of-type { border-top: none; margin-top: 8px; }
+
   .lede { color: var(--muted); margin: 0 0 18px; max-width: 70ch; }
   section { scroll-margin-top: 56px; }
   .card {
@@ -92,6 +100,7 @@
     border-radius: 4px;
     padding: 1px 5px;
     font-size: 13px;
+    overflow-wrap: anywhere;
   }
   .shots { display: flex; flex-wrap: wrap; gap: 12px; align-content: start; }
   .shot { text-align: center; max-width: 340px; }
@@ -106,7 +115,8 @@
   .shot figcaption { font-size: 12px; color: var(--muted); margin-top: 4px; }
   .player { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #111; }
   .player video { display: block; width: 100%; height: auto; background: #111; }
-  .card.wide { grid-template-columns: 1fr; }
+  .card.wide { grid-template-columns: minmax(0, 1fr); }
+  .card > * { min-width: 0; }
   .player { position: relative; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: #111; }
   .player video { display: block; width: 100%; height: auto; background: #111; }
   .ptoggle {
@@ -124,17 +134,76 @@
     width: auto; max-width: 94vw; max-height: 92vh; height: 92vh;
     border-radius: 8px;
   }
+  .hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 45px;
+    margin: 36px 0 115px;
+  }
+  .art-link {
+    display: block;
+    width: min(420px, 100%);
+  }
+  .art-link img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 18px;
+  }
+  a.tactile-switch {
+    border-radius: 3% 10% 6% 16% / 18% 72% 21% 74%;
+    height: 48px;
+    min-width: 168px;
+    color: rgba(255, 255, 255, 0.3);
+    background-color: #666;
+    background-image: linear-gradient(
+      to bottom,
+      transparent 0px 3px,
+      rgba(0, 0, 0, 0.5) 3px 8px,
+      transparent 8px 11px,
+      rgba(0, 0, 0, 0.5) 11px 16px,
+      rgba(0, 0, 0, 0.14) 16px 26px
+    );
+    outline: 2px solid rgba(102, 102, 102, 0.5);
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    padding: 0 14px 6px 16px;
+    box-sizing: border-box;
+    font-size: 16px;
+    font-weight: bold;
+    line-height: 1;
+    white-space: nowrap;
+    text-decoration: none;
+    box-shadow:
+      inset 0 4px 12px rgba(0, 0, 0, 0.45),
+      0 15px 25px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+    user-select: none;
+  }
+  a.tactile-switch:hover {
+    color: rgba(255, 255, 255, 0.9);
+  }
   @media (max-width: 760px) {
-    .card { grid-template-columns: 1fr; }
-    .shot { max-width: 300px; }
+    .card { grid-template-columns: minmax(0, 1fr); }
+    .shot { max-width: 100%; }
+    main { padding: 16px 12px 64px; }
   }
 </style>
 </head>
 <body>
 <header>
   <div class="bar">
-    <span class="logo">monerochan wallet</span>
     <nav id="nav">
+      <a class="logo" href="#get">monerochan wallet</a>
       <a href="#tool-calls">tool calls</a>
       <a href="#wallet">wallet</a>
       <a href="#payment-links">payment links</a>
@@ -143,6 +212,19 @@
 </header>
 
 <main>
+<!-- ============================ GET THE WALLET ============================ -->
+<section id="get">
+  <div class="hero">
+    <a class="art-link" href="#wallet">
+      <img src="../../assets/monerochancity.png" alt="monerochan" />
+    </a>
+    <div class="hero-actions">
+      <a class="tactile-switch" href="https://github.com/monerochan-ecosystem/monerochan-wallet" target="_blank" rel="noopener">source code</a>
+      <a class="tactile-switch" href="https://github.com/monerochan-ecosystem/monerochan-wallet/releases/latest" target="_blank" rel="noopener">install</a>
+    </div>
+  </div>
+</section>
+
 <!-- ============================ TOOL CALLS ============================ -->
 <section id="tool-calls">
   <h2>tool calls</h2>
@@ -528,6 +610,7 @@
     endpoints the wallet talks to. Start it in production with
     <code>bun run production</code>. It listens on
     <code>http://localhost:3003</code>.
+    <a href="https://github.com/monerochan-ecosystem/monero-payment-links" target="_blank" rel="noopener">source code</a>
   </p>
 
   <div class="card">
@@ -618,17 +701,90 @@
 </main>
 
 <script>
-  // highlight the active section in the sticky nav
+  // mark the nav item for the section in view
   const links = [...document.querySelectorAll("#nav a")];
   const sections = links.map((a) => document.querySelector(a.getAttribute("href")));
-  const pick = () => {
+  const mark = (link) => {
+    links.forEach((a) => a.classList.toggle("active", a === link));
+  };
+  let anim = 0;
+  let lock = null;
+  const setHash = (hash) => {
+    if (location.hash === hash) return;
+    const y = window.scrollY;
+    history.replaceState(null, "", hash);
+    if (window.scrollY !== y) window.scrollTo({ top: y, behavior: "instant" });
+  };
+  const pick = (writeHash) => {
+    if (lock) {
+      mark(lock);
+      return;
+    }
     const y = window.scrollY + 80;
     let idx = 0;
     sections.forEach((s, i) => { if (s && s.offsetTop <= y) idx = i; });
-    links.forEach((a, i) => a.classList.toggle("active", i === idx));
+    const link = links[idx];
+    mark(link);
+    if (writeHash) setHash(link.getAttribute("href"));
   };
-  addEventListener("scroll", pick, { passive: true });
-  pick();
+  const go = (link) => {
+    const hash = link.getAttribute("href");
+    const section = document.querySelector(hash);
+    if (!section) return;
+    cancelAnimationFrame(anim);
+    lock = link;
+    mark(link);
+    const root = document.documentElement;
+    root.style.scrollBehavior = "auto";
+    const headerH = document.querySelector("header").offsetHeight;
+    const maxY = Math.max(0, root.scrollHeight - window.innerHeight);
+    const lift = hash === "#get" ? 72 : 0;
+    const settle = Math.min(maxY, Math.max(0, section.offsetTop - headerH - lift));
+    const past = Math.min(maxY, settle + 36);
+    window.scrollTo({ top: past, behavior: "instant" });
+    setHash(hash);
+    if (Math.abs(window.scrollY - past) > 1) window.scrollTo({ top: past, behavior: "instant" });
+    const from = window.scrollY;
+    const dist = settle - from;
+    const done = () => {
+      root.style.scrollBehavior = "";
+      if (lock === link) lock = null;
+    };
+    const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduce || Math.abs(dist) < 2) {
+      window.scrollTo({ top: settle, behavior: "instant" });
+      done();
+      return;
+    }
+    const ms = 180;
+    const t0 = performance.now();
+    const step = (now) => {
+      if (lock !== link) return;
+      const t = Math.min(1, (now - t0) / ms);
+      const e = 1 - (1 - t) * (1 - t);
+      window.scrollTo({ top: from + dist * e, behavior: "instant" });
+      if (t < 1) anim = requestAnimationFrame(step);
+      else done();
+    };
+    anim = requestAnimationFrame(step);
+  };
+  const stop = () => {
+    if (!lock) return;
+    cancelAnimationFrame(anim);
+    lock = null;
+    document.documentElement.style.scrollBehavior = "";
+  };
+  addEventListener("wheel", stop, { passive: true });
+  addEventListener("touchstart", stop, { passive: true });
+  links.forEach((a) => {
+    a.addEventListener("click", (event) => {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+      event.preventDefault();
+      go(a);
+    });
+  });
+  addEventListener("scroll", () => pick(true), { passive: true });
+  pick(false);
 </script>
 <script>
   document.querySelectorAll(".player").forEach((p) => {
