@@ -1,22 +1,16 @@
-// Adapt the paths below to your local dev environment.
-// Start the regtest node only when port 18081 does not answer. Leave it up if it already answers.
-// The monerod binary is in the monero-wallet-api repo:
-// /path/to/monero-wallet-api/typescript/tests/moneronode/monerod
-// mkdir -p /tmp/monero-regtest-coincontrol
-// /path/to/monero-wallet-api/typescript/tests/moneronode/monerod \
-//   --regtest --offline --fixed-difficulty 1 \
-//   --rpc-bind-ip 127.0.0.1 --rpc-bind-port 18081 \
-//   --data-dir /tmp/monero-regtest-coincontrol \
-//   --non-interactive \
-//   --log-file /tmp/monerod-coincontrol.log
-// Start Brave only when port 9222 does not answer. Do not start a second one.
-// brave-browser \
-//   --user-data-dir="$HOME/.local/share/monerochan wallet dev" \
-//   --remote-debugging-port=9222 \
-//   --remote-allow-origins=http://127.0.0.1:9222 \
-//   --load-extension="/path/to/monerochan wallet dev/dist/chrome" \
-//   --disable-extensions-except="/path/to/monerochan wallet dev/dist/chrome"
-import { cdp } from "./cdp";
+// Run test/start-regtest.sh when port 18081 or port 9222 does not answer.
+// The script does not start a second node or a second browser.
+// setup.ts calls the same script. main() calls it too.
+// monerod: testdata/moneronode/monerod from test/download-monerod.ts
+// data dir: testdata/regtest
+// log: testdata/monerod.log
+// Brave profile: testdata/brave-profile
+// Extension: dist/chrome
+// Brave log: testdata/brave.log
+// Shop: ../monero-payment-links via bun run production. Clone only when that folder is absent.
+import { cdp, ensureSidePanel } from "./cdp";
+import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser } from "./setup";
+// resetWallet restarts Brave so the background loads the new wallet.
 // Full wallet pass on the real side panel. Never opens sidebar.html as a tab.
 // Every check senses UI state (plate, slider, open calls) plus app state
 // (balance, pool) first, acts on what it finds, verifies the effect, and
@@ -37,8 +31,13 @@ let panelId: string;
 async function attach(): Promise<void> {
   // sidebar.html can be the real side panel or a tab. the real panel has no window id.
   // a reload closes the panel and changes the target id. attach again. skip a blank body.
-  const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
-  const cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
+  let list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  let cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
+  if (!cands.length) {
+    await ensureSidePanel(send);
+    list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
+  }
   if (!cands.length) throw new Error("no sidebar target");
   let lastErr = "";
   for (const t of cands) {
@@ -46,8 +45,15 @@ async function attach(): Promise<void> {
       const attached = await send("Target.attachToTarget", { targetId: t.id, flatten: true });
       const s = attached.sessionId;
       await send("Runtime.enable", {}, s);
-      const body = await send("Runtime.evaluate", { expression: `document.body ? document.body.innerText.length : -1`, returnByValue: true }, s);
-      if ((body.result?.value ?? -1) > 50) {
+      let len = -1;
+      const bodyStart = Date.now();
+      while (Date.now() - bodyStart < 8000) {
+        const body = await send("Runtime.evaluate", { expression: `document.body ? document.body.innerText.length : -1`, returnByValue: true }, s);
+        len = body.result?.value ?? -1;
+        if (len > 50) break;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+      if (len > 50) {
         panelId = t.id;
         sessionId = s;
         return;
@@ -149,7 +155,32 @@ async function waitFor(elId: string): Promise<void> {
 }
 
 async function setInput(elId: string, value: string): Promise<void> {
-  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); return 1; })()`);
+  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); if (typeof el.oninput === "function") el.oninput(); return 1; })()`);
+}
+
+async function idbGet(key: string): Promise<string> {
+  const raw = await ev(`(async () => {
+    const db = await new Promise((resolve, reject) => { const req = indexedDB.open("files"); req.onerror = () => reject(req.error); req.onsuccess = () => resolve(req.result); });
+    const text = await new Promise((resolve, reject) => { const req = db.transaction("files").objectStore("files").get(${JSON.stringify(key)}); req.onerror = () => reject(req.error); req.onsuccess = () => resolve(req.result || ""); });
+    return typeof text === "string" ? text : "";
+  })()`);
+  return raw || "";
+}
+
+async function scanSettings(): Promise<{ node_url?: string; start_height?: number | null }> {
+  const raw = await idbGet("ScanSettings.json");
+  return raw ? JSON.parse(raw) : {};
+}
+
+async function connectionStatus(): Promise<{ status: string; scan: number; daemon: number } | null> {
+  const raw = await idbGet("ConnectionStatus-ScanSettings.json");
+  if (!raw) return null;
+  const c = JSON.parse(raw);
+  return {
+    status: c.last_packet?.status || "",
+    scan: c.sync?.current_scan_height || 0,
+    daemon: c.sync?.daemon_height || c.last_packet?.daemon_height || 0,
+  };
 }
 
 async function poll<T>(fn: () => Promise<T>, want: (v: T) => boolean, timeoutMs: number, label: string): Promise<T | null> {
@@ -243,6 +274,8 @@ async function dismissStrayCalls(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  startNodeAndBrowser();
+  await reviveSidebar();
   await init();
 
   // use only the local regtest node. read /get_height.
@@ -256,13 +289,9 @@ async function main(): Promise<void> {
   // the text is "catastrophic reorg occured".
   await attempt("panel renders with wallet", async () => {}, async () => {
     const ui = await senseUi();
-    if (!ui.plate && ui.balance === 0) {
-      const t = await text();
-      if (!t.includes("0 XMR") && !t.includes("catastrophic reorg")) {
-        return { ok: false, detail: "blank panel" };
-      }
-    }
-    return { ok: true, detail: `plate=${ui.plate} bal=${ui.balance}` };
+    const t = await text();
+    const live = !!ui.plate || ui.balance > 0 || t.includes("0 XMR") || t.includes("GENERATE SEEDPHRASE") || t.includes("catastrophic reorg");
+    return live ? { ok: true, detail: `plate=${ui.plate} bal=${ui.balance}` } : { ok: false, detail: "blank panel" };
   });
 
   // do not send from a reorg cache. wipe with DELETE ALL FILES.
@@ -270,19 +299,18 @@ async function main(): Promise<void> {
   // the panel reloads onto onboarding, then to main/no_domain/single/0.
   // a new wallet shows 0 XMR.
   await attempt("no reorg or reset done", async () => {
+    if (await needsReorgReset()) await resetWallet();
     const t = await text();
-    if (!t.includes("catastrophic reorg")) return;
-    await ensurePlate("connection");
-    await clickId("openDevSettingsButton");
-    await ev(`(() => { const el = document.getElementById("wipeWallet"); el.value = "DELETE ALL FILES"; el.dispatchEvent(new Event("input", {bubbles:true})); return 1; })()`);
-    const wiped = await poll(async () => text(), (x) => x.includes("GENERATE SEEDPHRASE"), 60000, "wipe");
-    if (!wiped) throw new Error("wipe did not finish");
+    if (!t.includes("GENERATE SEEDPHRASE")) return;
     await clickId("generate");
     await clickId("finish-setup");
-    await poll(async () => text(), (x) => x.includes("0 XMR"), 60000, "new wallet");
+    const made = await poll(async () => text(), (x) => x.includes("0 XMR"), 60000, "new wallet");
+    if (!made) throw new Error("new wallet did not finish");
+    await reloadWalletBackground();
   }, async () => {
     const t = await text();
-    return !t.includes("catastrophic reorg") ? { ok: true, detail: "" } : { ok: false, detail: "still reorged" };
+    const ok = !t.includes("catastrophic reorg") && !t.includes("GENERATE SEEDPHRASE");
+    return ok ? { ok: true, detail: "" } : { ok: false, detail: "still onboarding or reorg" };
   });
 
   // reset puts the fields back. it does not change the worker.
@@ -297,10 +325,15 @@ async function main(): Promise<void> {
     await setInput("nodeUrl", NODE);
     await setInput("startHeight", "0");
     await clickId("saveNodeUrl");
+    const stored = await poll(scanSettings, (f) => f.node_url === NODE && f.start_height === 0, 20000, "scan settings");
+    if (!stored) throw new Error("start height is empty or node url was not stored");
+    const cs = await poll(connectionStatus, (c) => !!c && (c.status === "OK" || c.status === "blocks_buffer_full") && c.daemon > 0, 40000, "connection status");
+    if (!cs) throw new Error("connection status did not show the daemon");
   }, async () => {
-    const t = await poll(async () => text(), (x) => x.includes("saved"), 20000, "save confirm");
-    const url = await ev(`document.getElementById("nodeUrl") && document.getElementById("nodeUrl").value`);
-    return t && url === NODE ? { ok: true, detail: "" } : { ok: false, detail: "no confirm" };
+    const file = await scanSettings();
+    const cs = await connectionStatus();
+    const ok = file.node_url === NODE && file.start_height === 0 && !!cs && cs.daemon > 0 && (cs.status === "OK" || cs.status === "blocks_buffer_full");
+    return ok ? { ok: true, detail: `scan=${cs?.scan} daemon=${cs?.daemon} ${cs?.status}` } : { ok: false, detail: `node=${file.node_url} start=${file.start_height} status=${cs?.status || "none"}` };
   });
 
   // a coinbase reward unlocks after 60 blocks.
@@ -309,19 +342,26 @@ async function main(): Promise<void> {
   // mine past about 1000 blocks first.
   await attempt("funded with decoy depth", async () => {
     const h = await nodeHeight();
-    if ((await spendable()) <= 0) {
-      const addr = await ev(`window.wallets.wallets[0].primary_address`);
-      if (!addr) throw new Error("no wallet address");
-      await mineTo(addr, 1);
+    if (h < 1000) await mineTo(DECOY_ADDR, 1000 - h);
+    const cs = await connectionStatus();
+    if (!cs || cs.daemon < 1) throw new Error("not connected, daemon " + (cs?.daemon ?? "none"));
+    const addr = await ev(`window.wallets.wallets[0].primary_address`);
+    if (!addr) throw new Error("no wallet address");
+    for (let round = 0; round < 3 && (await spendable()) <= FUND_MIN; round++) {
+      if (round === 0) await mineTo(addr, 1);
+      await mineTo(DECOY_ADDR, 60);
+      const caught = await poll(async () => {
+        const now = await connectionStatus();
+        const bal = await spendable();
+        if (now) console.log(`..scan=${now.scan} daemon=${now.daemon} ${now.status} bal=${bal}`);
+        return { now, bal };
+      }, (s) => s.bal > FUND_MIN && !!s.now && s.now.scan + 2 >= s.now.daemon, 90000, "scan to unlocked funds");
+      if (caught) break;
     }
-    if (h < 1500) await mineTo(DECOY_ADDR, 1000);
-    for (let round = 0; round < 3; round++) {
-      if ((await spendable()) > FUND_MIN && (await poolSize()) === 0) return;
-      await mineTo(DECOY_ADDR, round === 0 ? 12 : 60);
-      await poll(poolSize, (x) => x === 0, 60000, "pool drain");
-      const done = await poll(spendable, (x) => x > FUND_MIN, 90000, "unlocked funds");
-      if (done !== null && (await poolSize()) === 0) return;
-    }
+    if ((await spendable()) <= FUND_MIN) throw new Error("scan did not unlock funds");
+    if ((await poolSize()) > 0) await mineTo(DECOY_ADDR, 1);
+    const drained = await poll(poolSize, (x) => x === 0, 15000, "pool drain");
+    if (drained === null) throw new Error("pool did not empty after mining");
   }, async () => {
     const bal = await spendable();
     const pool = await poolSize();
