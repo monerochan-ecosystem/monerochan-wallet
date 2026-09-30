@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>monerochan wallet feature tour</title>
+<title>monerochan wallet</title>
+<link rel="icon" href="favicon.ico" sizes="48x48" />
 <style>
   :root {
     --ink: #1c1c1c;
@@ -139,7 +140,7 @@
     flex-direction: column;
     align-items: center;
     gap: 45px;
-    margin: 36px 0 115px;
+    margin: 150px 0 425px;
   }
   .art-link {
     display: block;
@@ -216,7 +217,7 @@
 <section id="get">
   <div class="hero">
     <a class="art-link" href="#wallet">
-      <img src="../../assets/monerochancity.png" alt="monerochan" />
+      <img src="assets/monerochancity.png" alt="monerochan" />
     </a>
     <div class="hero-actions">
       <a class="tactile-switch" href="https://github.com/monerochan-ecosystem/monerochan-wallet" target="_blank" rel="noopener">source code</a>
@@ -738,7 +739,7 @@
     root.style.scrollBehavior = "auto";
     const headerH = document.querySelector("header").offsetHeight;
     const maxY = Math.max(0, root.scrollHeight - window.innerHeight);
-    const lift = hash === "#get" ? 72 : 0;
+    const lift = hash === "#get" ? 220 : 0;
     const settle = Math.min(maxY, Math.max(0, section.offsetTop - headerH - lift));
     const past = Math.min(maxY, settle + 36);
     window.scrollTo({ top: past, behavior: "instant" });
