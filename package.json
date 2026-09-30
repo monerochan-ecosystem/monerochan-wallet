@@ -20,7 +20,7 @@
     "clean": "rm -rf ./dist"
   },
   "devDependencies": {
-    "@spirobel/monero-wallet-api": "0.6.0",
+    "@spirobel/monero-wallet-api": "0.6.1",
     "@spirobel/seedphrase": "0.3.2",
     "@types/bun": "1.3.14",
     "@types/chrome": "0.1.32"
