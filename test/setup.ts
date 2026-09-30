@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -231,8 +232,75 @@ export async function reviveSidebar(): Promise<void> {
   throw new Error("side panel stayed blank");
 }
 
+function shopScanIsStale(root: string): boolean {
+  const statusPath = join(root, "wallet-caches/ConnectionStatus-ScanSettings.json");
+  if (!existsSync(statusPath)) return false;
+  const status = JSON.parse(readFileSync(statusPath, "utf8"));
+  return status?.last_packet?.status === "catastrophic_reorg";
+}
+
+async function pointShopAtRegtest(root: string, port: number, startCmd: string) {
+  const settingsPath = join(root, "wallet-caches/ScanSettings.json");
+  if (!existsSync(settingsPath)) return;
+  const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
+  const wrongNode = settings.node_url !== NODE;
+  const stale = shopScanIsStale(root);
+  if (!wrongNode && !stale) {
+    console.log("shop on regtest", port);
+    return;
+  }
+  if (wrongNode) {
+    console.log("set shop node", settings.node_url, "->", NODE, "port", port);
+    settings.node_url = NODE;
+    settings.start_height = 0;
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+  } else {
+    console.log("shop scan is stale, clearing caches", port);
+  }
+  const dir = join(root, "wallet-caches");
+  for (const name of readdirSync(dir)) {
+    if (name.endsWith("_cache.json") || name.endsWith("_stats.json") || name.startsWith("ConnectionStatus")) {
+      rmSync(join(dir, name));
+    }
+  }
+  console.log("restarting shop", port);
+  spawnSync("bash", ["-lc", `fuser -k ${port}/tcp >/dev/null 2>&1 || true`]);
+  spawnSync("bash", ["-lc", startCmd]);
+  const start = Date.now();
+  while (Date.now() - start < 90000) {
+    const probe = spawnSync("curl", ["-s", "-m", "2", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${port}/`], { encoding: "utf8" });
+    const code = (probe.stdout || "").trim();
+    if (/^[1-5][0-9][0-9]$/.test(code)) {
+      console.log("shop up", port, code);
+      return;
+    }
+    if (Date.now() - start > 2000 && ((Date.now() - start) % 5000) < 600) console.log("waiting for shop", port);
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  throw new Error("shop did not come back on port " + port);
+}
+
+export async function pointShopsAtRegtest(origin?: string) {
+  const projects = join(dirname(fileURLToPath(import.meta.url)), "../..");
+  const want3004 = origin?.includes(":3004");
+  if (!want3004) {
+    await pointShopAtRegtest(
+      join(projects, "monero-payment-links"),
+      3003,
+      "cd " + join(projects, "monero-payment-links") + " && setsid bun run production >/tmp/payment-links.log 2>&1 </dev/null &",
+    );
+    return;
+  }
+  await pointShopAtRegtest(
+    join(projects, "monero-wallet-api/standard-checkout"),
+    3004,
+    "cd " + join(projects, "monero-wallet-api/standard-checkout") + " && setsid bun checkout.ts >/tmp/standard-checkout.log 2>&1 </dev/null &",
+  );
+}
+
 export async function ensureHealthyWallet(): Promise<string> {
   startNodeAndBrowser();
+  await pointShopsAtRegtest();
   await ensureSidePanel();
   await reviveSidebar();
   const h = await nodeHeight();
