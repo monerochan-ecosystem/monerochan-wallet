@@ -158,6 +158,11 @@ async function setInput(elId: string, value: string): Promise<void> {
   await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); if (typeof el.oninput === "function") el.oninput(); return 1; })()`);
 }
 
+async function fieldValue(elId: string): Promise<string> {
+  const v = await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); return el ? el.value : ""; })()`);
+  return v ?? "";
+}
+
 async function idbGet(key: string): Promise<string> {
   const raw = await ev(`(async () => {
     const db = await new Promise((resolve, reject) => { const req = indexedDB.open("files"); req.onerror = () => reject(req.error); req.onsuccess = () => resolve(req.result); });
@@ -334,6 +339,37 @@ async function main(): Promise<void> {
     const cs = await connectionStatus();
     const ok = file.node_url === NODE && file.start_height === 0 && !!cs && cs.daemon > 0 && (cs.status === "OK" || cs.status === "blocks_buffer_full");
     return ok ? { ok: true, detail: `scan=${cs?.scan} daemon=${cs?.daemon} ${cs?.status}` } : { ok: false, detail: `node=${file.node_url} start=${file.start_height} status=${cs?.status || "none"}` };
+  });
+
+  // reset reads the settings file. it does not write it.
+  // start height 3 is not the open-time value, so a stale memory read fails.
+  // a typed url must not stick. put start height back to 0 for the scan tests.
+  await attempt("node fields reset", async () => {
+    await ensurePlate("connection");
+    await waitFor("saveNodeUrl");
+    await setInput("nodeUrl", NODE);
+    await setInput("startHeight", "3");
+    await clickId("saveNodeUrl");
+    const stored = await poll(scanSettings, (f) => f.node_url === NODE && f.start_height === 3, 20000, "start height 3");
+    if (!stored) throw new Error("start height 3 was not stored");
+    await setInput("nodeUrl", "http://127.0.0.1:19999");
+    await setInput("startHeight", "77");
+    await clickId("resetNodeUrl");
+    const fields = await poll(async () => ({ node: await fieldValue("nodeUrl"), height: await fieldValue("startHeight") }), (f) => f.node === NODE && f.height === "3", 10000, "reset fields");
+    if (!fields) throw new Error("reset did not put the stored node url and start height back");
+    const file = await scanSettings();
+    if (file.node_url !== NODE || file.start_height !== 3) throw new Error("reset wrote the settings file");
+    await setInput("nodeUrl", NODE);
+    await setInput("startHeight", "0");
+    await clickId("saveNodeUrl");
+    const back = await poll(scanSettings, (f) => f.node_url === NODE && f.start_height === 0, 20000, "start height 0");
+    if (!back) throw new Error("start height 0 was not stored");
+  }, async () => {
+    const file = await scanSettings();
+    const node = await fieldValue("nodeUrl");
+    const height = await fieldValue("startHeight");
+    const ok = file.node_url === NODE && file.start_height === 0 && node === NODE && height === "0";
+    return ok ? { ok: true, detail: "" } : { ok: false, detail: `file=${file.node_url} start=${file.start_height} node=${node} height=${height}` };
   });
 
   // a coinbase reward unlocks after 60 blocks.

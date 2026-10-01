@@ -1,42 +1,43 @@
-import {
-  get_info,
-  readNodeUrlFromScanSettings,
-} from "@spirobel/monero-wallet-api";
+import { openScanSettingsFile } from "@spirobel/monero-wallet-api";
 import { html, type MiniHtmlString } from "../../../mininext/mininext";
 import { leftLower, tactileContentPlate } from "../ui/content";
 import { integerInput, textInput } from "../ui/input";
 
 import { developerSettings } from "./developerSettings";
+import { canStoreNodeUrl, findNodeInfo, nodeUrlToSave } from "./nodeUrlSave";
 import {
   connectedToNode,
   currentScanHeight,
-  currentStartingHeight,
   daemonHeight,
   eta,
-  setCurrentStartingHeight,
 } from "./walletRoute";
 
-async function readNodeUrl() {
-  nodeUrlInputValue = (await readNodeUrlFromScanSettings()) || null;
-  const nodeUrlInput = document.getElementById(
-    "nodeUrl",
-  ) as HTMLInputElement | null;
-  if (nodeUrlInput) {
-    nodeUrlInput.value = nodeUrlInputValue || "";
-  }
-}
+let connectionFieldsLoaded = false;
+
 function startheightToString(startHeight: number | null) {
   if (startHeight === null) return "";
   return String(startHeight);
 }
-function readStartHeight() {
-  startHeightInputValue = currentStartingHeight() || null;
+function showConnectionFields() {
+  const nodeUrlInput = document.getElementById(
+    "nodeUrl",
+  ) as HTMLInputElement | null;
+  if (nodeUrlInput) nodeUrlInput.value = nodeUrlInputValue || "";
   const startHeightInput = document.getElementById(
     "startHeight",
   ) as HTMLInputElement | null;
-  if (startHeightInput) {
+  if (startHeightInput && startHeightInputValue !== false) {
     startHeightInput.value = startheightToString(startHeightInputValue);
   }
+}
+async function loadConnectionFields() {
+  const settings = await openScanSettingsFile();
+  if (nodeUrlInputValue !== null) return;
+  nodeUrlInputValue = settings?.node_url || null;
+  if (startHeightInputValue === false) {
+    startHeightInputValue = settings?.start_height ?? null;
+  }
+  showConnectionFields();
 }
 const empty_status_message = html`<div></div>`;
 function positiveStatusMessage(message: string) {
@@ -80,21 +81,42 @@ function openDevSettingsHandler() {
   openDevSettings = !openDevSettings;
 }
 async function resetNodeUrlHandler() {
-  await readNodeUrl();
-  await readStartHeight();
+  const settings = await openScanSettingsFile();
+  nodeUrlInputValue = settings?.node_url || null;
+  startHeightInputValue = settings?.start_height ?? null;
+  showConnectionFields();
   status_message = neutralStatusMessage("Node URL, start height reset");
   test_result = "";
 }
 async function saveNodeUrlHandler() {
-  if (!nodeUrlInputValue) return;
-  status_message = positiveStatusMessage("Node URL saved");
-  test_result = "";
-
-  if (startHeightInputValue !== false) {
-    await setCurrentStartingHeight(startHeightInputValue);
-    status_message = positiveStatusMessage("Node URL, start height saved");
+  const nodeUrlInput = document.getElementById(
+    "nodeUrl",
+  ) as HTMLInputElement | null;
+  if (!nodeUrlInput || !window.wallets) return;
+  let nodeUrl = nodeUrlInput.value.trim();
+  if (nodeUrl.endsWith("/")) nodeUrl = nodeUrl.slice(0, -1);
+  if (!nodeUrl) return;
+  const startHeightInput = document.getElementById(
+    "startHeight",
+  ) as HTMLInputElement | null;
+  let startHeight: number | null = null;
+  if (startHeightInput && startHeightInput.value.length > 0) {
+    const parsed = parseInt(startHeightInput.value, 10);
+    if (isNaN(parsed) || parsed < 0) return;
+    startHeight = parsed;
   }
-  void window.wallets?.changeNodeUrl(nodeUrlInputValue);
+  nodeUrl = await nodeUrlToSave(nodeUrl);
+  if (!canStoreNodeUrl(nodeUrl)) {
+    status_message = negativeStatusMessage("Node URL is not valid");
+    test_result = "";
+    return;
+  }
+  nodeUrlInput.value = nodeUrl;
+  nodeUrlInputValue = nodeUrl;
+  startHeightInputValue = startHeight;
+  test_result = "";
+  await window.wallets.changeNodeUrlAndStartHeight(nodeUrl, startHeight);
+  status_message = positiveStatusMessage("Node URL, start height saved");
 }
 
 async function sendTestRequestHandler() {
@@ -102,28 +124,28 @@ async function sendTestRequestHandler() {
     "nodeUrl",
   ) as HTMLInputElement | null;
   if (!nodeUrlInput) return;
-  try {
-    nodeUrlInputValue = nodeUrlInput.value.trim();
-    if (nodeUrlInputValue.endsWith("/")) {
-      nodeUrlInputValue = nodeUrlInputValue.slice(0, -1);
-    }
-    nodeUrlInput.value = nodeUrlInputValue;
-    const test = await get_info(nodeUrlInputValue);
-    status_message = positiveStatusMessage(`get_info response success`);
-    test_result = JSON.stringify(test, null, 2);
-    const new_height = test.height - 1;
-    if (!startHeightInputValue) {
-      startHeightInputValue = new_height;
-      const startHeightInput = document.getElementById(
-        "startHeight",
-      ) as HTMLInputElement | null;
-      if (startHeightInput) {
-        startHeightInput.value = startheightToString(startHeightInputValue);
-      }
-    }
-  } catch (err) {
+  let nodeUrl = nodeUrlInput.value.trim();
+  if (nodeUrl.endsWith("/")) nodeUrl = nodeUrl.slice(0, -1);
+  if (!nodeUrl) return;
+  const found = await findNodeInfo(nodeUrl);
+  if (!found) {
     status_message = negativeStatusMessage(`get_info response failed`);
     test_result = "";
+    return;
+  }
+  nodeUrlInputValue = found.url;
+  nodeUrlInput.value = found.url;
+  status_message = positiveStatusMessage(`get_info response success`);
+  test_result = JSON.stringify(found.info, null, 2);
+  const new_height = found.info.height - 1;
+  if (!startHeightInputValue) {
+    startHeightInputValue = new_height;
+    const startHeightInput = document.getElementById(
+      "startHeight",
+    ) as HTMLInputElement | null;
+    if (startHeightInput) {
+      startHeightInput.value = startheightToString(new_height);
+    }
   }
 }
 export function connectionPlate() {
@@ -163,7 +185,10 @@ export function connectionPlate() {
     ) {
       nodeUrlInput.value = nodeUrlInputValue;
     }
-    if (nodeUrlInputValue === null) readNodeUrl();
+    if (!connectionFieldsLoaded) {
+      connectionFieldsLoaded = true;
+     loadConnectionFields();
+    }
   }
   const startHeightInput = document.getElementById(
     "startHeight",
@@ -176,7 +201,6 @@ export function connectionPlate() {
     ) {
       startHeightInput.value = startheightToString(startHeightInputValue);
     }
-    if (startHeightInputValue === false) readStartHeight();
   }
   return tactileContentPlate(
     html`<div>
