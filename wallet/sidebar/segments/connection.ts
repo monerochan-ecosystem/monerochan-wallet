@@ -1,12 +1,10 @@
-import {
-  get_info,
-  openScanSettingsFile,
-} from "@spirobel/monero-wallet-api";
+import { openScanSettingsFile } from "@spirobel/monero-wallet-api";
 import { html, type MiniHtmlString } from "../../../mininext/mininext";
 import { leftLower, tactileContentPlate } from "../ui/content";
 import { integerInput, textInput } from "../ui/input";
 
 import { developerSettings } from "./developerSettings";
+import { canStoreNodeUrl, findNodeInfo, nodeUrlToSave } from "./nodeUrlSave";
 import {
   connectedToNode,
   currentScanHeight,
@@ -107,6 +105,12 @@ async function saveNodeUrlHandler() {
     if (isNaN(parsed) || parsed < 0) return;
     startHeight = parsed;
   }
+  nodeUrl = await nodeUrlToSave(nodeUrl);
+  if (!canStoreNodeUrl(nodeUrl)) {
+    status_message = negativeStatusMessage("Node URL is not valid");
+    test_result = "";
+    return;
+  }
   nodeUrlInput.value = nodeUrl;
   nodeUrlInputValue = nodeUrl;
   startHeightInputValue = startHeight;
@@ -120,28 +124,28 @@ async function sendTestRequestHandler() {
     "nodeUrl",
   ) as HTMLInputElement | null;
   if (!nodeUrlInput) return;
-  try {
-    nodeUrlInputValue = nodeUrlInput.value.trim();
-    if (nodeUrlInputValue.endsWith("/")) {
-      nodeUrlInputValue = nodeUrlInputValue.slice(0, -1);
-    }
-    nodeUrlInput.value = nodeUrlInputValue;
-    const test = await get_info(nodeUrlInputValue);
-    status_message = positiveStatusMessage(`get_info response success`);
-    test_result = JSON.stringify(test, null, 2);
-    const new_height = test.height - 1;
-    if (!startHeightInputValue) {
-      startHeightInputValue = new_height;
-      const startHeightInput = document.getElementById(
-        "startHeight",
-      ) as HTMLInputElement | null;
-      if (startHeightInput) {
-        startHeightInput.value = startheightToString(startHeightInputValue);
-      }
-    }
-  } catch (err) {
+  let nodeUrl = nodeUrlInput.value.trim();
+  if (nodeUrl.endsWith("/")) nodeUrl = nodeUrl.slice(0, -1);
+  if (!nodeUrl) return;
+  const found = await findNodeInfo(nodeUrl);
+  if (!found) {
     status_message = negativeStatusMessage(`get_info response failed`);
     test_result = "";
+    return;
+  }
+  nodeUrlInputValue = found.url;
+  nodeUrlInput.value = found.url;
+  status_message = positiveStatusMessage(`get_info response success`);
+  test_result = JSON.stringify(found.info, null, 2);
+  const new_height = found.info.height - 1;
+  if (!startHeightInputValue) {
+    startHeightInputValue = new_height;
+    const startHeightInput = document.getElementById(
+      "startHeight",
+    ) as HTMLInputElement | null;
+    if (startHeightInput) {
+      startHeightInput.value = startheightToString(new_height);
+    }
   }
 }
 export function connectionPlate() {
