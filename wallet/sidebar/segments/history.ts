@@ -199,7 +199,7 @@ function PrependingTxsList() {
           <div></div>
           <div>
             <span class="sign">-</span>
-            <span class="amount-negative">
+            <span class="transaction-amount-negative">
               ${truncateDecimalString(convertBigIntAmount(tx.amount))}
             </span>
           </div>
@@ -253,7 +253,7 @@ function transactionsList() {
         };
       }
       setOpenDetails(tx_hash);
-      const positive_or_negative = tx.amount > 0 ? "amount" : "amount-negative";
+      const positive_or_negative = tx.amount > 0 ? "transaction-amount" : "transaction-amount-negative";
       const amount_class =
         tx.status.status === "pending" ? "" : positive_or_negative;
       const sign = tx.amount > 0 ? "+" : "-";
@@ -314,10 +314,10 @@ export function historyPlate() {
           .sign {
             margin-right: 4px;
           }
-          .amount {
+          .transaction-amount {
             color: #ff4444;
           }
-          .amount-negative {
+          .transaction-amount-negative {
             color: white;
           }
           .pending {
