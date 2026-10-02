@@ -183,23 +183,23 @@ export function walletsPlate() {
   const walletsList: () => MiniHtmlString = () => {
     const wl = allWallets().map((wallet) => {
       const colorclass =
-        (wallet.amount || 0n) > 0 ? "amount-positive" : "amount-zero";
+        (wallet.amount || 0n) > 0 ? "wallet-route-amount-positive" : "wallet-route-amount-zero";
       const amount = convertBigIntAmount(wallet.amount || 0n);
       const amountTrun = truncateDecimalString(amount, 3);
       return html`<div class="wallet-route">
-        <a class="wallet" href=${router.link(wallet.wallet_route || "")}>
+        <a class="wallet-route-link" href=${router.link(wallet.wallet_route || "")}>
           ${wallet.wallet_route || '""'}
         </a>
-        <div class="amount ${colorclass}">${amountTrun}</div>
+        <div class="wallet-route-amount ${colorclass}">${amountTrun}</div>
       </div>`;
-    }) || [html`<div class="wallet">no wallets</div>`];
+    }) || [html`<div class="wallet-route-link">no wallets</div>`];
     return flatten(wl);
   };
 
   return tactileContentPlate(
     html`<div>
       <style>
-        .wallet {
+        .wallet-route-link {
           box-sizing: border-box;
           color: rgb(0, 0, 238);
           cursor: pointer;
@@ -207,6 +207,7 @@ export function walletsPlate() {
           font-family: sans-serif;
           font-size: 16px;
           font-weight: 700;
+          place-self: flex-start;
         }
         .wallet-route {
           display: grid;
@@ -214,10 +215,13 @@ export function walletsPlate() {
           gap: 28px;
           place-items: baseline;
         }
-        .amount-positive {
+        .wallet-route-amount {
+          place-self: flex-end;
+        }
+        .wallet-route-amount-positive {
           color: #ff4444;
         }
-        .amount-zero {
+        .wallet-route-amount-zero {
           color: white;
         }
         #openWalletsAdvancedOptionsButton {
