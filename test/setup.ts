@@ -175,7 +175,53 @@ export async function resetWallet(): Promise<void> {
   await panelClick("finish-setup");
   const made = await pollText((x) => x.includes("0 XMR"), 60000, "new wallet");
   if (!made) throw new Error("new wallet did not finish");
+  // onboarding stores a public node. point at regtest before the worker scans it.
+  await useRegtestNodeBeforeRestart();
   await reloadWalletBackground();
+}
+
+// a new wallet file points at a public node. tests need the regtest node.
+// stop the worker, write the local url, drop caches, then the caller restarts brave.
+export async function useRegtestNodeBeforeRestart(): Promise<void> {
+  const wrote = await panelEval(`(async () => {
+    try { await window.wallets?.stopWorker?.(); } catch {}
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open("files");
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve(req.result);
+    });
+    const read = db.transaction("files").objectStore("files");
+    const text = await new Promise((resolve, reject) => {
+      const req = read.get("ScanSettings.json");
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve(req.result || "");
+    });
+    const keys = await new Promise((resolve, reject) => {
+      const req = db.transaction("files").objectStore("files").getAllKeys();
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => resolve(req.result || []);
+    });
+    if (!text) return 0;
+    const settings = JSON.parse(text);
+    settings.node_url = ${JSON.stringify(NODE)};
+    settings.start_height = 0;
+    const tx = db.transaction("files", "readwrite");
+    const store = tx.objectStore("files");
+    store.put(JSON.stringify(settings, null, 2), "ScanSettings.json");
+    for (const key of keys) {
+      if (typeof key !== "string") continue;
+      if (key.endsWith("_cache.json") || key.endsWith("_stats.json") || key.startsWith("ConnectionStatus")) {
+        store.delete(key);
+      }
+    }
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve(1);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    return 1;
+  })()`);
+  if (wrote !== 1) throw new Error("did not point the new wallet at regtest");
 }
 
 export async function reloadWalletBackground(): Promise<void> {
@@ -312,6 +358,7 @@ export async function ensureHealthyWallet(): Promise<string> {
     await panelClick("finish-setup");
     const made = await pollText((x) => x.includes("0 XMR"), 60000, "new wallet");
     if (!made) throw new Error("new wallet did not finish");
+    await useRegtestNodeBeforeRestart();
     restartBrave();
     await ensureSidePanel();
   }

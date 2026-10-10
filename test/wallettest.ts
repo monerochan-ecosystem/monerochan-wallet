@@ -9,7 +9,7 @@
 // Brave log: testdata/brave.log
 // Shop: ../monero-payment-links via bun run production. Clone only when that folder is absent.
 import { cdp, ensureSidePanel } from "./cdp";
-import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser } from "./setup";
+import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser, useRegtestNodeBeforeRestart } from "./setup";
 // resetWallet restarts Brave so the background loads the new wallet.
 // Full wallet pass on the real side panel. Never opens sidebar.html as a tab.
 // Every check senses UI state (plate, slider, open calls) plus app state
@@ -311,6 +311,7 @@ async function main(): Promise<void> {
     await clickId("finish-setup");
     const made = await poll(async () => text(), (x) => x.includes("0 XMR"), 60000, "new wallet");
     if (!made) throw new Error("new wallet did not finish");
+    await useRegtestNodeBeforeRestart();
     await reloadWalletBackground();
   }, async () => {
     const t = await text();

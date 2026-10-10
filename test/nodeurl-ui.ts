@@ -6,7 +6,7 @@
 // verifies the effect, and retries once from a fresh sense before failing.
 // Usage: bun test/nodeurl-ui.ts
 import { cdp, ensureSidePanel } from "./cdp";
-import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser } from "./setup";
+import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser, useRegtestNodeBeforeRestart } from "./setup";
 
 const LOCAL = "http://127.0.0.1:18081";
 const REMOTE = "https://node.monero.fail";
@@ -256,6 +256,7 @@ async function ensureWalletReady(): Promise<void> {
       await clickId("finish-setup").catch(() => {});
       const made = await poll(async () => text(), (x) => x.includes("0 XMR"), 60000, "new wallet");
       if (!made) continue;
+      await useRegtestNodeBeforeRestart();
       await reloadWalletBackground();
       await reconnect();
       continue;
