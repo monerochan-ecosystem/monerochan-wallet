@@ -1,4 +1,4 @@
-import { get_info } from "@spirobel/monero-wallet-api";
+import { get_info } from "@spirobel/monero-wallet-api/unpacked";
 
 export function nodeUrlCandidates(nodeUrl: string) {
   const candidates = [nodeUrl];

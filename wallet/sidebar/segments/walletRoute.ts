@@ -1,7 +1,7 @@
 import {
   type ConnectionStatus,
   type ManyScanCachesOpened,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import type { Mini } from "../../../mininext/mininext";
 import { router, type WalletRouteParams } from "../router";
 import { attachHandlers } from "../ui/buttons";

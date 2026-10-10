@@ -1,7 +1,7 @@
 import {
   convertBigIntAmount,
   readConnectionStatusDefaultLocation,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { html } from "../../../mininext/mininext";
 import { currentlySelectedWallet, firstWallet } from "./walletRoute";
 export const safetyButtonIds = {

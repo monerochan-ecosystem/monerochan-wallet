@@ -4,7 +4,7 @@ import {
   type ActionLogEvent,
   type InvocationState,
   type TxLog,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { flatten, html, type MiniHtmlString } from "../../mininext/mininext";
 import { actionLog } from "./init";
 import { router } from "./router";

@@ -14,7 +14,7 @@ import {
   writeEnvLineToDotEnvRefresh,
   writeWalletSecretsToDotEnv,
   writeWalletToScanSettings,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { router } from "../router";
 
 import { navigateToFirstWallet } from "./walletRoute";

@@ -2,7 +2,7 @@ import {
   LOGGING_FUNCTIONS,
   readDir,
   type PossibleLogs,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { html, flatten } from "../../../mininext/mininext";
 import { textInput } from "../ui/input";
 import { router } from "../router";

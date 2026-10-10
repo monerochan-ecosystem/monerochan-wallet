@@ -4,7 +4,7 @@ import {
   parseAddress,
   type ParseAddressError,
   type ParsedAddress,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { flatten, html, type MiniHtmlString } from "../../../mininext/mininext";
 import {
   connectedToNode,

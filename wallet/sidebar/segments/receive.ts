@@ -1,7 +1,7 @@
 import {
   convertBigIntAmount,
   truncateDecimalString,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { flatten, html } from "../../../mininext/mininext";
 import { actionButton, attachHandlers } from "../ui/buttons";
 import { middleUpper, tactileContentPlate } from "../ui/content";
@@ -10,7 +10,7 @@ import type {
   FoundTransaction,
   Pending,
   Subaddress,
-} from "@spirobel/monero-wallet-api/";
+} from "@spirobel/monero-wallet-api/unpacked";
 export type ReceiveActionButtonIds =
   (typeof receiveActionButtonIds)[keyof typeof receiveActionButtonIds];
 export const receiveActionButtonIds = {

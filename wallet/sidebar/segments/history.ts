@@ -1,12 +1,12 @@
-import type { FoundTransaction } from "@spirobel/monero-wallet-api";
+import type { FoundTransaction } from "@spirobel/monero-wallet-api/unpacked";
 import { flatten, html } from "../../../mininext/mininext";
 import { rightUpper, tactileContentPlate } from "../ui/content";
 import { currentlySelectedWallet } from "./walletRoute";
 import {
   truncateDecimalString,
   convertBigIntAmount,
-} from "@spirobel/monero-wallet-api";
-import type { Pending, PrePendingTx } from "@spirobel/monero-wallet-api/";
+} from "@spirobel/monero-wallet-api/unpacked";
+import type { Pending, PrePendingTx } from "@spirobel/monero-wallet-api/unpacked";
 import { openActionLogPage } from "../../actionlog/open";
 const openDetails: Record<string, boolean | undefined> = {};
 function setOpenDetails(tx_hash: string) {
