@@ -211,22 +211,26 @@ export async function submitCoinControl(
   if (!coinControlSendReady(false)) return;
   const wallet_to_send_from_pa = currentlySelectedWallet()?.primary_address;
   if (!wallet_to_send_from_pa) return;
-  markSent();
-  if (openSpendId) await dismissSpend(openSpendId);
   pruneCheckedInputs();
+  const sweep = sweepMode;
+  const address = (coinOutputRows[0]?.address ?? "").trim();
   const input_indexes = [...checkedInputIds];
-  if (sweepMode) {
-    await window.wallets?.sweepSignSend({
-      primary_address: wallet_to_send_from_pa,
-      address: (coinOutputRows[0]?.address ?? "").trim(),
-      input_indexes,
-    });
-    return;
-  }
   const payments = coinOutputRows.map((row) => ({
     address: row.address.trim(),
     amount: (row.amountAtomic ?? 0n).toString(),
   }));
+  markSent();
+  // drop the form before the wallet waits on the node.
+  resetCoinControl();
+  if (openSpendId) await dismissSpend(openSpendId);
+  if (sweep) {
+    await window.wallets?.sweepSignSend({
+      primary_address: wallet_to_send_from_pa,
+      address,
+      input_indexes,
+    });
+    return;
+  }
   await window.wallets?.makeSignSend({
     primary_address: wallet_to_send_from_pa,
     payments,

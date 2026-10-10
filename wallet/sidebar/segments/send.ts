@@ -115,10 +115,14 @@ async function sendCallback() {
     }, 2000);
 
     const open = spendOpen();
-    const amountDisplay = convertBigIntAmount(parsedAmount);
+    const address = parsedAddress.address;
+    const amount = parsedAmount;
+    const amountDisplay = convertBigIntAmount(amount);
+    // clear the plate before the wallet waits on the node.
+    clearSendForm(open?.invocationId ?? null);
     if (open) {
       await window.wallets?.actionLogOpened?.execute(open.invocationId, {
-        address: parsedAddress.address,
+        address,
         amount: amountDisplay,
         wallet_to_send_from_pa,
       });
@@ -127,8 +131,8 @@ async function sendCallback() {
         primary_address: wallet_to_send_from_pa,
         payments: [
           {
-            address: parsedAddress.address,
-            amount: parsedAmount.toString(),
+            address,
+            amount: amount.toString(),
           },
         ],
         input_indexes: [],
@@ -163,44 +167,48 @@ let lastTxLogMessageClass = "";
 function setTXlogStatusMsg() {
   lastTxLogMessage = "";
   lastTxLogMessageClass = "";
-  if (last_tx_log && last_tx_log.sendResult?.status !== "OK") {
-    lastTxLogMessage =
-      "failed to send transaction " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-error";
-  }
-  if (last_tx_log && last_tx_log.sendResult?.status === "OK") {
+  if (!last_tx_log) return;
+  // the first tx log write has no node answer yet. that is not a failure.
+  if (!last_tx_log.sendResult && !last_tx_log.error) return;
+  if (last_tx_log.sendResult?.status === "OK") {
     lastTxLogMessage =
       "successfully sent transaction " + formatTime(last_tx_log.timestamp);
     lastTxLogMessageClass = "txlog-success";
+    return;
   }
+  lastTxLogMessage =
+    "failed to send transaction " + formatTime(last_tx_log.timestamp);
+  lastTxLogMessageClass = "txlog-error";
 }
-async function resetSendInputs() {
+function clearSendForm(invocationId?: string | null) {
+  if (invocationId) ignoredSpendId = invocationId;
   resetCoinControl();
-  const open = spendOpen();
-  if (open) {
-    ignoredSpendId = open.invocationId;
-    await window.wallets?.actionLogOpened?.dismiss(open.invocationId);
-  }
+  amountInputValue = "";
+  parsedAmount = null;
+  addressInputValue = "";
+  parsedAddress = null;
   const amountInput = document.getElementById(
     "amountInput",
   ) as HTMLInputElement | null;
-
   if (amountInput) {
     amountInput.value = "";
-    amountInputValue = "";
-    parsedAmount = null;
     amountInput.disabled = false;
   }
   const addressInput = document.getElementById(
     "addressInput",
   ) as HTMLInputElement | null;
-
   if (addressInput) {
     addressInput.value = "";
-    addressInputValue = "";
-    parsedAddress = null;
     addressInput.disabled = false;
   }
+}
+async function resetSendInputs() {
+  const open = spendOpen();
+  if (open) {
+    ignoredSpendId = open.invocationId;
+    await window.wallets?.actionLogOpened?.dismiss(open.invocationId);
+  }
+  clearSendForm();
 }
 export async function parseAddressCallback() {
   const addressInput = document.getElementById(
