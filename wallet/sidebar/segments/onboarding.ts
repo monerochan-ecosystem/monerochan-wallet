@@ -404,6 +404,8 @@ async function finishCB() {
     primary_address,
     wallet_route: walletRouteToString(WALLET_DEFAULT_ROUTE),
     logs: "off",
+    // a new wallet starts on a public node. not the local default.
+    node_url: "https://node.monero.fail",
   });
   void window.wallets?.buildWallets();
   router.navigate(walletRouteToString(WALLET_DEFAULT_ROUTE));

@@ -115,8 +115,12 @@ async function saveNodeUrlHandler() {
   nodeUrlInputValue = nodeUrl;
   startHeightInputValue = startHeight;
   test_result = "";
-  await window.wallets.changeNodeUrlAndStartHeight(nodeUrl, startHeight);
-  status_message = positiveStatusMessage("Node URL, start height saved");
+  try {
+    await window.wallets.changeNodeUrlAndStartHeight(nodeUrl, startHeight);
+    status_message = positiveStatusMessage("Node URL, start height saved");
+  } catch {
+    status_message = negativeStatusMessage("Node URL, start height not saved");
+  }
 }
 
 async function sendTestRequestHandler() {

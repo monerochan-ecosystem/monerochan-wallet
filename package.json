@@ -24,7 +24,7 @@
     "clean": "rm -rf ./dist"
   },
   "devDependencies": {
-    "@spirobel/monero-wallet-api": "0.6.2",
+    "@spirobel/monero-wallet-api": "https://github.com/monerochan-ecosystem/monero-wallet-api/releases/download/0.6.3/spirobel-monero-wallet-api-0.6.3.tgz",
     "@spirobel/seedphrase": "0.3.2",
     "@types/bun": "1.3.14",
     "@types/chrome": "0.1.32"
