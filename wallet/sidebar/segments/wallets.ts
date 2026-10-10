@@ -6,7 +6,7 @@ import {
   writeWalletToScanSettings,
   writeWalletSecretsToDotEnv,
   writeScanSettingsFileDefaultLocation,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { flatten, html, type MiniHtmlString } from "../../../mininext/mininext";
 import { router } from "../router";
 import { rightLower, tactileContentPlate } from "../ui/content";

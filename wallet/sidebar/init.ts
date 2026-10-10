@@ -1,8 +1,15 @@
 import {
   openWallets,
+  configureUnpacked,
   SCAN_SETTINGS_STORE_NAME_DEFAULT,
   type InvocationState,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
+
+configureUnpacked({
+  workerUrl: "worker_unpacked.js",
+  moneroWasmUrl: "monero_wallet_api.wasm",
+  dkgWasmUrl: "frost_dkg.wasm",
+});
 import { router } from "./router";
 import { lowerButtonIds } from "./segments/walletLower";
 import { removeActive } from "./ui/buttons";

@@ -1,7 +1,7 @@
 import {
   ActionLogOpened,
   type InvocationState,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 
 if (typeof chrome !== "undefined" && typeof browser === "undefined") {
   (globalThis as unknown as { browser: typeof chrome }).browser = chrome;

@@ -1,4 +1,4 @@
-import { openScanSettingsFile } from "@spirobel/monero-wallet-api";
+import { openScanSettingsFile } from "@spirobel/monero-wallet-api/unpacked";
 import { html, type MiniHtmlString } from "../../../mininext/mininext";
 import { leftLower, tactileContentPlate } from "../ui/content";
 import { integerInput, textInput } from "../ui/input";

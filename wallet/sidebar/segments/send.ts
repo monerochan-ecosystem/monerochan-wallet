@@ -4,7 +4,7 @@ import {
   parseAddress,
   type ParseAddressError,
   type ParsedAddress,
-} from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
 import { html, type MiniHtmlString } from "../../../mininext/mininext";
 import { actionButton, removeActive } from "../ui/buttons";
 import { leftUpper, tactileContentPlate } from "../ui/content";
@@ -29,8 +29,8 @@ import {
 import type {
   InvocationState,
   TxLog,
-} from "@spirobel/monero-wallet-api";
-import { getToolUiByPermissions } from "@spirobel/monero-wallet-api";
+} from "@spirobel/monero-wallet-api/unpacked";
+import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/unpacked";
 import { toggleActionLogPage } from "../../actionlog/open";
 
 let parsedAmount: bigint | null = null;
