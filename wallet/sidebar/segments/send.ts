@@ -169,11 +169,21 @@ function setTXlogStatusMsg() {
   lastTxLogMessageClass = "";
   if (!last_tx_log) return;
   // the first tx log write has no node answer yet. that is not a failure.
-  if (!last_tx_log.sendResult && !last_tx_log.error) return;
+  if (!last_tx_log.sendResult && !last_tx_log.error) {
+    lastTxLogMessage =
+      "sent tx to node " + formatTime(last_tx_log.timestamp);
+    lastTxLogMessageClass = "txlog-neutral";
+    return;
+  }
   if (last_tx_log.sendResult?.status === "OK") {
     lastTxLogMessage =
       "successfully sent transaction " + formatTime(last_tx_log.timestamp);
     lastTxLogMessageClass = "txlog-success";
+    return;
+  }
+  if (last_tx_log.error && last_tx_log.error.includes("not enough funds")) {
+    lastTxLogMessage = "not enough funds " + formatTime(last_tx_log.timestamp);
+    lastTxLogMessageClass = "txlog-error";
     return;
   }
   lastTxLogMessage =
@@ -612,6 +622,11 @@ export function sendPlate() {
         grid-area: result;
         margin-left: 39px;
         color: #ff0000;
+      }
+      .txlog-neutral {
+        grid-area: result;
+        margin-left: 39px;
+        color: rgba(255, 255, 255, 0.75);
       }
     </style>
     ${tactileContentPlate(
