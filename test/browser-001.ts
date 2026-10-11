@@ -75,6 +75,49 @@ async function panelClick(elId: string): Promise<void> {
 
 await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of al.getActiveByPermissions(["spend"])) al.dismiss(x.invocationId); return 1; })()`);
 
+// an unverified payment link shows an info message with a dismiss button.
+{
+  const href = `http://127.0.0.1:3003/#monerochan001_amount_0.1_address_${DECOY}_no_check`;
+  const t = await targetByUrl("checkoutId");
+  const s = await send("Target.attachToTarget", { targetId: t.id, flatten: true });
+  await send("Runtime.enable", {}, s.sessionId);
+  await send("Runtime.evaluate", {
+    expression: `(() => {
+      const a = document.createElement("a");
+      a.id = "nocheck-link";
+      a.href = ${JSON.stringify(href)};
+      a.textContent = "nocheck";
+      a.style.cssText = "position:fixed;left:8px;top:8px;z-index:99999";
+      document.body.appendChild(a);
+      return 1;
+    })()`,
+    returnByValue: true,
+  }, s.sessionId);
+  const box = await send("Runtime.evaluate", {
+    expression: `(() => { const a = document.getElementById("nocheck-link"); const b = a.getBoundingClientRect(); return JSON.stringify({x:b.x+b.width/2,y:b.y+b.height/2}); })()`,
+    returnByValue: true,
+  }, s.sessionId);
+  const pos = JSON.parse(box.result.value);
+  await send("Input.dispatchMouseEvent", { type: "mousePressed", x: pos.x, y: pos.y, button: "left", clickCount: 1 }, s.sessionId);
+  await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: pos.x, y: pos.y, button: "left", clickCount: 1 }, s.sessionId);
+  const start = Date.now();
+  let shown = false;
+  while (Date.now() - start < 8000) {
+    const text = String(await panel(`document.body.innerText`) || "");
+    const btn = await panel(`!!document.getElementById("dismissInfo")`);
+    if (text.includes("skips destination checks") && btn === true) { shown = true; break; }
+    if ((await panel(`window.activeWalletPlate`)) !== "send") await panelClick("send");
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!shown) throw new Error("unverified info message or dismiss button missing");
+  console.log("info message: unverified, dismiss shown");
+  await panelClick("dismissInfo");
+  const gone = await panel(`!document.body.innerText.includes("skips destination checks")`);
+  if (gone !== true) throw new Error("dismiss did not hide the info message");
+  console.log("info message dismissed");
+  await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of al.getActiveByPermissions(["spend"])) al.dismiss(x.invocationId); return 1; })()`);
+}
+
 // pay click with a trusted gesture
 {
   const t = await targetByUrl("checkoutId");
@@ -205,6 +248,40 @@ let decoyRetried = false;
 }
 console.log("entry:", entry || "(not found)");
 if (!entry) throw new Error("send never confirmed");
+
+{
+  const executedId = String(await panel(`(() => {
+    const invs = Object.values(window.wallets.actionLogOpened.invocationsCache ?? {});
+    const rows = invs.filter((v) => v.toolId === "001" && (v.lastType === "execute_result" || v.lastType === "execute_start"));
+    rows.sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
+    return rows[0]?.invocationId || "";
+  })()`) || "");
+  const start = Date.now();
+  let hint = false;
+  while (Date.now() - start < 8000) {
+    const text = String(await panel(`document.body.innerText`) || "");
+    const buttons = await panel(`!!document.getElementById("dismissExecuted") && !!document.getElementById("visitExecuted")`);
+    if (text.includes("tool call executed") && buttons === true) { hint = true; break; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!hint) throw new Error("tool call executed hint missing");
+  console.log("hint: tool call executed");
+  await panelClick("visitExecuted");
+  const look = Date.now();
+  let visitUrl = "";
+  while (Date.now() - look < 8000) {
+    const targets = await send("Target.getTargets");
+    const hit = (targets.targetInfos || []).find((row: any) => String(row.url || "").includes("actionlog.html") && String(row.url || "").includes(executedId));
+    if (hit) { visitUrl = hit.url; break; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!visitUrl) throw new Error("visit did not open the action log entry");
+  console.log("visit:", visitUrl);
+  await panelClick("dismissExecuted");
+  const hidden = await panel(`!document.body.innerText.includes("tool call executed")`);
+  if (hidden !== true) throw new Error("dismiss did not hide the executed hint");
+  console.log("executed hint dismissed");
+}
 
 const checkoutPage = new URL(co);
 const checkoutId = checkoutPage.searchParams.get("checkoutId");

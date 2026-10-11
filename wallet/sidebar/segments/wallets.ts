@@ -19,9 +19,11 @@ import {
 } from "@spirobel/seedphrase";
 import { initWallets } from "../init";
 import { textInput } from "../ui/input";
-import { toggleActionLogPage } from "../../actionlog/open";
+import { openActionLogPage, toggleActionLogPage } from "../../actionlog/open";
 let shareOpen: InvocationState | null = null;
 let shareBusyId: string | null = null;
+let executedShareId: string | null = null;
+let executedShareDismissed = false;
 let openAdvancedOptions = false;
 let restoreRouteMessage: MiniHtmlString = html`<div></div>`;
 let removeRouteMessage: MiniHtmlString = html`<div></div>`;
@@ -179,6 +181,19 @@ export function walletsPlate() {
   if (logBtn) {
     logBtn.onclick = () => toggleActionLogPage();
   }
+  const dismissShareExecuted = document.getElementById("dismissShareExecuted");
+  if (dismissShareExecuted) {
+    dismissShareExecuted.onclick = () => {
+      executedShareDismissed = true;
+    };
+  }
+  const visitShareExecuted = document.getElementById("visitShareExecuted");
+  if (visitShareExecuted && executedShareId) {
+    const visitId = executedShareId;
+    visitShareExecuted.onclick = () => {
+      void openActionLogPage(visitId);
+    };
+  }
 
   const walletsList: () => MiniHtmlString = () => {
     const wl = allWallets().map((wallet) => {
@@ -329,8 +344,9 @@ export function walletsPlate() {
             </div>`
           : ""}
       </div>
-      <div style="margin-top: 12px;">
-        <span class="tool-action" id="openActionLog">actionlog</span>
+      <div class="share-log-row">
+        <span class="tool-action share-log-btn" id="openActionLog">actionlog</span>
+        ${shareExecutedHint()}
       </div>
     </div>`,
     rightLower,
@@ -340,6 +356,14 @@ export function walletsPlate() {
   );
 }
 
+function shareExecutedHint() {
+  if (!executedShareId || executedShareDismissed) return "";
+  return html`<div class="share-executed">
+    tool call executed
+    <span class="tool-action" id="visitShareExecuted">visit</span>
+    <span class="tool-action" id="dismissShareExecuted">dismiss</span>
+  </div>`;
+}
 function formatTime(timestamp: number | string) {
   const date = new Date(
     typeof timestamp === "string" ? Date.parse(timestamp) || Date.now() : timestamp,
@@ -367,6 +391,8 @@ async function acceptShareViewWalletTool() {
   if (shareBusyId === open.invocationId && open.lastType !== "execute_error")
     return;
   shareBusyId = open.invocationId;
+  executedShareId = open.invocationId;
+  executedShareDismissed = false;
   const wallet_slot = String(open.wallet_slot ?? 0);
 
   const walletRoute: WalletRoute = {
@@ -508,6 +534,38 @@ function shareWalletToolStyles() {
       }
       .tool-action:hover {
         color: white;
+      }
+      .share-log-row {
+        margin-top: 12px;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 11px;
+      }
+      .share-executed {
+        color: rgba(255, 255, 255, 0.75);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .share-executed .tool-action,
+      .share-log-btn {
+        margin: 0;
+        box-shadow:
+          inset 0 4px 12px rgba(0, 0, 0, 0.45),
+          0 5px 8px rgba(0, 0, 0, 0.4);
+        font-size: 14px;
+        font-weight: normal;
+        line-height: normal;
+        color: rgba(255, 255, 255, 0.75);
+        background: transparent;
+        cursor: pointer;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 4px;
+        padding: 2px 4px;
+        user-select: none;
+        width: fit-content;
+        flex: none;
       }
       .tool-action-accept {
         color: #00ff00;
