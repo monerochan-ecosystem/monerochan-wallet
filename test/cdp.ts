@@ -1,6 +1,6 @@
 type SendFn = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<any>;
 
-export async function cdp(): Promise<{ ws: WebSocket; send: SendFn }> {
+export async function cdp(onEvent?: (msg: { method?: string; params?: any; sessionId?: string }) => void): Promise<{ ws: WebSocket; send: SendFn }> {
   const ver: any = await (await fetch("http://127.0.0.1:9222/json/version")).json();
   const ws = new WebSocket(ver.webSocketDebuggerUrl);
   let n = 0;
@@ -34,7 +34,9 @@ export async function cdp(): Promise<{ ws: WebSocket; send: SendFn }> {
       pending.delete(m.id);
       if (m.error) p.reject(new Error(JSON.stringify(m.error)));
       else p.resolve(m.result);
+      return;
     }
+    if (m.method) onEvent?.(m);
   };
   await new Promise<void>((r) => {
     ws.onopen = () => r();

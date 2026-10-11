@@ -94,6 +94,21 @@ const styles = html`<style>
     color: white;
     border-color: rgba(255, 255, 255, 0.6);
   }
+  .log-jump {
+    cursor: pointer;
+    user-select: none;
+    display: inline-block;
+    margin-top: 8px;
+    margin-right: 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    padding: 2px 8px;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .log-jump:hover {
+    color: white;
+    border-color: rgba(255, 255, 255, 0.6);
+  }
   .log-row {
     border: 2px solid rgba(255, 255, 255, 0.2);
     border-radius: 4px;
@@ -227,11 +242,37 @@ function tabRows(): InvocationState[] {
   return all;
 }
 
+function ensureTxLogs() {
+  if (txlogCache === null) void refreshTxLogs();
+}
+
 function txlogRows(): TxLogRow[] {
   return [...(txlogCache ?? [])].sort((a, b) => b.log.timestamp - a.log.timestamp);
 }
 
+function txlogForInvocation(invocationId: string): TxLogRow | null {
+  const rows = (txlogCache ?? []).filter(
+    (row) => row.log.invocationId === invocationId,
+  );
+  rows.sort((a, b) => b.log.timestamp - a.log.timestamp);
+  return rows[0] ?? null;
+}
+
+function openToolCall(invocationId: string) {
+  pageInputFocused = false;
+  router.navigate("/invo/:invocationId", { invocationId });
+}
+
+function openTxRow(row: TxLogRow) {
+  pageInputFocused = false;
+  router.navigate("/tx/:wallet/:index", {
+    wallet: row.wallet,
+    index: String(row.log.index),
+  });
+}
+
 function txStatus(log: TxLogRow["log"]): string {
+  if (!log.sendResult && !log.error) return "sent tx to node";
   if (log.sendResult?.status) return log.sendResult.status;
   if (log.error) return "failed";
   return "no result";
@@ -240,9 +281,18 @@ function txStatus(log: TxLogRow["log"]): string {
 function txlogItem(row: TxLogRow) {
   const log = row.log;
   const id = `txlog-${row.wallet.slice(0, 8)}-${log.index}`;
+  const toolBtn = `toolbtn-${row.wallet.slice(0, 8)}-${log.index}`;
   const payments = (log.payments ?? [])
     .map((p) => `${p.amount ?? ""} ${p.address ?? ""}`)
     .join(" | ");
+  const jump = document.getElementById(toolBtn);
+  if (jump && log.invocationId) {
+    const invocationId = log.invocationId;
+    jump.onclick = (ev) => {
+      ev.stopPropagation();
+      openToolCall(invocationId);
+    };
+  }
   return html`<div class="log-row" id="${id}">
     <div class="log-status">${txStatus(log)}</div>
     <div>${formatTime(log.timestamp)}</div>
@@ -251,11 +301,11 @@ function txlogItem(row: TxLogRow) {
       ${log.inputs_index?.length
         ? html`<span class="log-address">inputs: ${log.inputs_index.join(", ")}</span>`
         : ""}
-      ${log.invocationId
-        ? html`<span class="log-address">tool call: ${log.invocationId.slice(0, 8)}</span>`
-        : ""}
       <span class="log-address">wallet: ${row.wallet.slice(0, 12)}… height: ${log.height ?? ""}</span>
     </div>
+    ${log.invocationId
+      ? html`<div class="log-jump" id="${toolBtn}">tool call</div>`
+      : ""}
   </div>`;
 }
 
@@ -363,6 +413,7 @@ function attachListHandlers(pages: number) {
 }
 
 function listPage(): MiniHtmlString {
+  ensureTxLogs();
   const isTx = logTab === "txlog";
   const total = isTx ? txlogRows().length : tabRows().length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -377,6 +428,8 @@ function listPage(): MiniHtmlString {
         .slice(start, start + PAGE_SIZE)
         .map((row) => {
           const id = `row-${row.invocationId}`;
+          const tx = txlogForInvocation(row.invocationId);
+          const txBtn = `txbtn-${row.invocationId}`;
           const el = document.getElementById(id);
           if (el) {
             el.onclick = () => {
@@ -384,6 +437,13 @@ function listPage(): MiniHtmlString {
               router.navigate("/invo/:invocationId", {
                 invocationId: row.invocationId,
               });
+            };
+          }
+          const jump = document.getElementById(txBtn);
+          if (jump && tx) {
+            jump.onclick = (ev) => {
+              ev.stopPropagation();
+              openTxRow(tx);
             };
           }
           return html`<div class="log-row" id="${id}">
@@ -396,6 +456,7 @@ function listPage(): MiniHtmlString {
           ? html`<span class="log-address">${row.address}</span>`
           : ""}
       </div>
+      ${tx ? html`<div class="log-jump" id="${txBtn}">txlog</div>` : ""}
     </div>`;
         });
   attachListHandlers(pages);
@@ -470,10 +531,14 @@ function goHome() {
 
 function detailPage(invocationId: string): MiniHtmlString {
   document.onkeydown = null;
+  ensureTxLogs();
   const home = document.getElementById("log-home");
   if (home) home.onclick = goHome;
   const back = document.getElementById("log-back");
   if (back) back.onclick = goHome;
+  const tx = txlogForInvocation(invocationId);
+  const txBtn = document.getElementById("open-txlog");
+  if (txBtn && tx) txBtn.onclick = () => openTxRow(tx);
 
   const head =
     (actionLog()?.invocations() ?? []).find(
@@ -488,9 +553,50 @@ function detailPage(invocationId: string): MiniHtmlString {
     <div class="log-title">${head ? titleFor(head) : "tool call"}</div>
     <div class="log-status">${status}</div>
     ${head ? invoInfo(head) : ""}
+    ${tx ? html`<div class="log-jump" id="open-txlog">txlog</div>` : ""}
     ${evs.length
       ? flatten(evs.map(eventLine))
       : html`<div class="log-empty">no events</div>`}
+    <div class="log-back" id="log-back">back</div>
+  </div>`;
+}
+
+function txlogPage(wallet: string, index: string): MiniHtmlString {
+  document.onkeydown = null;
+  ensureTxLogs();
+  const home = document.getElementById("log-home");
+  if (home) home.onclick = goHome;
+  const back = document.getElementById("log-back");
+  if (back) back.onclick = goHome;
+  const row =
+    (txlogCache ?? []).find(
+      (item) => item.wallet === wallet && String(item.log.index) === index,
+    ) ?? null;
+  const toolBtn = document.getElementById("open-tool-call");
+  if (toolBtn && row?.log.invocationId) {
+    const invocationId = row.log.invocationId;
+    toolBtn.onclick = () => openToolCall(invocationId);
+  }
+  const log = row?.log;
+  const payments = (log?.payments ?? [])
+    .map((p) => `${p.amount ?? ""} ${p.address ?? ""}`)
+    .join(" | ");
+  return html`<div class="log-page">
+    ${styles}
+    <div class="log-home" id="log-home">action log</div>
+    <div class="log-title">txlog</div>
+    <div class="log-status">${log ? txStatus(log) : ""}</div>
+    ${log
+      ? html`<div class="log-info">
+          <div>${formatTime(log.timestamp)}</div>
+          <div class="log-address">${log.error ?? ""} ${payments}</div>
+          <div class="log-address">inputs: ${(log.inputs_index ?? []).join(", ")}</div>
+          <div class="log-address">wallet: ${wallet}</div>
+        </div>`
+      : html`<div class="log-empty">no send</div>`}
+    ${log?.invocationId
+      ? html`<div class="log-jump" id="open-tool-call">tool call</div>`
+      : ""}
     <div class="log-back" id="log-back">back</div>
   </div>`;
 }
@@ -501,4 +607,8 @@ export function actionLogList() {
 
 export function actionLogDetail(params: { invocationId: string }) {
   return detailPage(params.invocationId);
+}
+
+export function actionLogTx(params: { wallet: string; index: string }) {
+  return txlogPage(params.wallet, params.index);
 }

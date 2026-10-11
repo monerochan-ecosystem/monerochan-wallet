@@ -31,13 +31,17 @@ import type {
   TxLog,
 } from "@spirobel/monero-wallet-api/unpacked";
 import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/unpacked";
-import { toggleActionLogPage } from "../../actionlog/open";
+import { openActionLogPage, toggleActionLogPage } from "../../actionlog/open";
 
 let parsedAmount: bigint | null = null;
 let amountInputValue = "";
 let addressInputValue = "";
 let justSentTx = false;
 let ignoredSpendId: string | null = null;
+let dismissedInfoId: string | null = null;
+let dismissedStatusStamp: number | null = null;
+let executedSpendId: string | null = null;
+let executedHintDismissed = false;
 // opening coin control retires the tool call through this handler
 setSpendDismissHandler(async (invocationId) => {
   ignoredSpendId = invocationId;
@@ -115,10 +119,16 @@ async function sendCallback() {
     }, 2000);
 
     const open = spendOpen();
-    const amountDisplay = convertBigIntAmount(parsedAmount);
+    const address = parsedAddress.address;
+    const amount = parsedAmount;
+    const amountDisplay = convertBigIntAmount(amount);
+    // clear the plate before the wallet waits on the node.
+    clearSendForm(open?.invocationId ?? null);
     if (open) {
+      executedSpendId = open.invocationId;
+      executedHintDismissed = false;
       await window.wallets?.actionLogOpened?.execute(open.invocationId, {
-        address: parsedAddress.address,
+        address,
         amount: amountDisplay,
         wallet_to_send_from_pa,
       });
@@ -127,8 +137,8 @@ async function sendCallback() {
         primary_address: wallet_to_send_from_pa,
         payments: [
           {
-            address: parsedAddress.address,
-            amount: parsedAmount.toString(),
+            address,
+            amount: amount.toString(),
           },
         ],
         input_indexes: [],
@@ -152,6 +162,7 @@ function readLastTxLog() {
   for (let i = logs.length - 1; i >= 0; i--) {
     const row = logs[i];
     if (row && !row.hidden_on_send_plate) {
+      if (row.timestamp === dismissedStatusStamp) break;
       last_tx_log = row;
       break;
     }
@@ -163,44 +174,58 @@ let lastTxLogMessageClass = "";
 function setTXlogStatusMsg() {
   lastTxLogMessage = "";
   lastTxLogMessageClass = "";
-  if (last_tx_log && last_tx_log.sendResult?.status !== "OK") {
+  if (!last_tx_log) return;
+  // the first tx log write has no node answer yet. that is not a failure.
+  if (!last_tx_log.sendResult && !last_tx_log.error) {
     lastTxLogMessage =
-      "failed to send transaction " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-error";
+      "sent tx to node " + formatTime(last_tx_log.timestamp);
+    lastTxLogMessageClass = "txlog-neutral";
+    return;
   }
-  if (last_tx_log && last_tx_log.sendResult?.status === "OK") {
+  if (last_tx_log.sendResult?.status === "OK") {
     lastTxLogMessage =
       "successfully sent transaction " + formatTime(last_tx_log.timestamp);
     lastTxLogMessageClass = "txlog-success";
+    return;
   }
+  if (last_tx_log.error && last_tx_log.error.includes("not enough funds")) {
+    lastTxLogMessage = "not enough funds " + formatTime(last_tx_log.timestamp);
+    lastTxLogMessageClass = "txlog-error";
+    return;
+  }
+  lastTxLogMessage =
+    "failed to send transaction " + formatTime(last_tx_log.timestamp);
+  lastTxLogMessageClass = "txlog-error";
 }
-async function resetSendInputs() {
+function clearSendForm(invocationId?: string | null) {
+  if (invocationId) ignoredSpendId = invocationId;
   resetCoinControl();
-  const open = spendOpen();
-  if (open) {
-    ignoredSpendId = open.invocationId;
-    await window.wallets?.actionLogOpened?.dismiss(open.invocationId);
-  }
+  amountInputValue = "";
+  parsedAmount = null;
+  addressInputValue = "";
+  parsedAddress = null;
   const amountInput = document.getElementById(
     "amountInput",
   ) as HTMLInputElement | null;
-
   if (amountInput) {
     amountInput.value = "";
-    amountInputValue = "";
-    parsedAmount = null;
     amountInput.disabled = false;
   }
   const addressInput = document.getElementById(
     "addressInput",
   ) as HTMLInputElement | null;
-
   if (addressInput) {
     addressInput.value = "";
-    addressInputValue = "";
-    parsedAddress = null;
     addressInput.disabled = false;
   }
+}
+async function resetSendInputs() {
+  const open = spendOpen();
+  if (open) {
+    ignoredSpendId = open.invocationId;
+    await window.wallets?.actionLogOpened?.dismiss(open.invocationId);
+  }
+  clearSendForm();
 }
 export async function parseAddressCallback() {
   const addressInput = document.getElementById(
@@ -349,6 +374,27 @@ export function toolInfo(t?: InvocationState | null) {
   </div> `;
 }
 
+function executedHintMarkup() {
+  if (!executedSpendId || executedHintDismissed) return "";
+  const dismissExecuted = document.getElementById("dismissExecuted");
+  if (dismissExecuted) {
+    dismissExecuted.onclick = () => {
+      executedHintDismissed = true;
+    };
+  }
+  const visitExecuted = document.getElementById("visitExecuted");
+  if (visitExecuted) {
+    const visitId = executedSpendId;
+    visitExecuted.onclick = () => {
+      void openActionLogPage(visitId);
+    };
+  }
+  return html`<div class="executed-hint">
+    tool call executed
+    <span class="tool-action" id="visitExecuted">visit</span>
+    <span class="tool-action" id="dismissExecuted">dismiss</span>
+  </div>`;
+}
 export function sendPlateContent() {
   const released = takeReleasedDraft();
   if (released) {
@@ -373,8 +419,16 @@ export function sendPlateContent() {
     ? convertAmountBigInt(open.amount)
     : null;
 
+  const showInfo = !!open && open.invocationId !== dismissedInfoId;
   const toolInfoSnippet = toolInfo(open);
-  const validitySnippet = validityMessage(open);
+  const validitySnippet = showInfo ? validityMessage(open) : "";
+  const dismissInfoBtn = document.getElementById("dismissInfo");
+  if (dismissInfoBtn && open) {
+    const infoId = open.invocationId;
+    dismissInfoBtn.onclick = () => {
+      dismissedInfoId = infoId;
+    };
+  }
   const amountInput = document.getElementById(
     "amountInput",
   ) as HTMLInputElement | null;
@@ -512,6 +566,12 @@ export function sendPlateContent() {
           right: 8px;
           bottom: 46px;
           display: flex;
+          flex-direction: column;
+          align-items: flex-end;
+          gap: 6px;
+        }
+        .tool-action-row {
+          display: flex;
           gap: 6px;
         }
         .tool-action {
@@ -519,25 +579,47 @@ export function sendPlateContent() {
             inset 0 4px 12px rgba(0, 0, 0, 0.45),
             0 5px 8px rgba(0, 0, 0, 0.4);
           font-size: 14px;
+          font-weight: normal;
+          line-height: normal;
+          color: rgba(255, 255, 255, 0.75);
+          background: transparent;
           cursor: pointer;
           border: 2px solid rgba(255, 255, 255, 0.3);
           border-radius: 4px;
           padding: 2px 4px;
           user-select: none;
           width: fit-content;
+          flex: none;
         }
         .tool-action:hover {
           color: white;
+        }
+        .info-with-dismiss {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+        .info-with-dismiss > .tool-action {
+          flex: none;
+          align-self: center;
         }
       </style>
 
       ${standardAddress}
       ${coinControlIsOn() ? "" : toolInfoSnippet}
-      ${coinControlIsOn() ? "" : validitySnippet}
+      ${!coinControlIsOn() && validitySnippet
+        ? html`<div class="info-with-dismiss">
+            ${validitySnippet}
+            <span class="tool-action" id="dismissInfo">dismiss</span>
+          </div>`
+        : ""}
       ${coinControlView()}
       <div class="tool-actions">
-        <span class="tool-action" id="openActionLog">actionlog</span>
-        <span class="tool-action" id="openHistoryPlate">history</span>
+        ${executedHintMarkup()}
+        <div class="tool-action-row">
+          <span class="tool-action" id="openActionLog">actionlog</span>
+          <span class="tool-action" id="openHistoryPlate">history</span>
+        </div>
       </div>
     </div>
     ${!connectedToNode()
@@ -576,6 +658,15 @@ export function formatTime(timestamp: number, block_timestamp = false) {
 export function sendPlate() {
   readLastTxLog();
   const sendButtonClass = walletUnlocked() ? "red-dot" : "grey-dot";
+  const dismissStatus = document.getElementById("dismissStatus");
+  if (dismissStatus && last_tx_log) {
+    const stamp = last_tx_log.timestamp;
+    dismissStatus.onclick = () => {
+      dismissedStatusStamp = stamp;
+      const pa = currentlySelectedWallet()?.primary_address;
+      if (pa) void window.wallets?.dismissSendPlate({ primary_address: pa });
+    };
+  }
 
   return html`<div class="plate">
     <style>
@@ -596,14 +687,48 @@ export function sendPlate() {
         margin-left: 14px;
       }
       .txlog-success {
-        grid-area: result;
         margin-left: 39px;
         color: #00ff00;
       }
       .txlog-error {
-        grid-area: result;
         margin-left: 39px;
         color: #ff0000;
+      }
+      .txlog-neutral {
+        margin-left: 39px;
+        color: rgba(255, 255, 255, 0.75);
+      }
+      .result-lines {
+        grid-area: result;
+      }
+      .executed-hint {
+        color: rgba(255, 255, 255, 0.75);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 3px;
+      }
+      .status-line {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .status-line .tool-action {
+        box-shadow:
+          inset 0 4px 12px rgba(0, 0, 0, 0.45),
+          0 5px 8px rgba(0, 0, 0, 0.4);
+        font-size: 14px;
+        font-weight: normal;
+        line-height: normal;
+        color: rgba(255, 255, 255, 0.75);
+        background: transparent;
+        cursor: pointer;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        border-radius: 4px;
+        padding: 2px 4px;
+        user-select: none;
+        width: fit-content;
+        flex: none;
       }
     </style>
     ${tactileContentPlate(
@@ -623,7 +748,14 @@ export function sendPlate() {
       )}
       <div></div>
       ${actionButton("reset-send", "RESET")}
-      <div class="${lastTxLogMessageClass}">${lastTxLogMessage}</div>
+      <div class="result-lines">
+        ${lastTxLogMessage
+          ? html`<div class="status-line">
+              <div class="${lastTxLogMessageClass}">${lastTxLogMessage}</div>
+              <span class="tool-action" id="dismissStatus">dismiss</span>
+            </div>`
+          : ""}
+      </div>
     </div>
   </div>`;
 }

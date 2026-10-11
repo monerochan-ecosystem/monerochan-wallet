@@ -38,19 +38,21 @@ await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of
 
 async function pageHasAddWallet(targetId: string): Promise<boolean> {
   const s = await send("Target.attachToTarget", { targetId, flatten: true });
-  await send("Runtime.enable", {}, s.sessionId);
-  const r = await send("Runtime.evaluate", { expression: `document.querySelectorAll(".add-wallet-btn").length`, returnByValue: true }, s.sessionId);
-  return (r.result?.value ?? 0) > 0;
+  try {
+    await send("Runtime.enable", {}, s.sessionId);
+    const r = await send("Runtime.evaluate", { expression: `document.querySelectorAll(".add-wallet-btn").length`, returnByValue: true }, s.sessionId);
+    return (r.result?.value ?? 0) > 0;
+  } finally {
+    await send("Target.detachFromTarget", { sessionId: s.sessionId }).catch(() => {});
+  }
 }
 
 async function findDashboard(): Promise<{ id: string }> {
   const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
-  const cands = list.filter((x) => (x.url || "").includes("127.0.0.1:3003"));
-  for (const c of cands) {
-    if (await pageHasAddWallet(c.id)) return c;
+  for (const stale of list.filter((x) => (x.url || "").includes("checkoutId") || (x.url || "").includes("/dashboard"))) {
+    await send("Target.closeTarget", { targetId: stale.id }).catch(() => {});
   }
-  const shop = cands[0];
-  const targetId = shop ? shop.id : (await send("Target.createTarget", { url: "http://127.0.0.1:3003/login" })).targetId;
+  const targetId = (await send("Target.createTarget", { url: "about:blank" })).targetId;
   const s = await send("Target.attachToTarget", { targetId, flatten: true });
   await send("Page.enable", {}, s.sessionId);
   await send("Runtime.enable", {}, s.sessionId);
@@ -112,7 +114,35 @@ if (!open.startsWith("1:")) throw new Error("no share call opened");
   }
   if (!(await shown())) throw new Error("accept button did not open");
 }
+const shareId = String(await panel(`(() => { const al = window.wallets.actionLogOpened; const o = al.getActiveByPermissions(["share_view"]); return o[0]?.invocationId || ""; })()`) || "");
 await panelClick("acceptShareWallet");
+{
+  const start = Date.now();
+  let hint = false;
+  while (Date.now() - start < 8000) {
+    const text = String(await panel(`document.body.innerText`) || "");
+    const buttons = await panel(`!!document.getElementById("visitShareExecuted") && !!document.getElementById("dismissShareExecuted")`);
+    if (text.includes("tool call executed") && buttons === true) { hint = true; break; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!hint) throw new Error("tool call executed hint missing");
+  console.log("hint: tool call executed");
+  await panelClick("visitShareExecuted");
+  const look = Date.now();
+  let visitUrl = "";
+  while (Date.now() - look < 8000) {
+    const targets = await send("Target.getTargets");
+    const hit = (targets.targetInfos || []).find((row: any) => String(row.url || "").includes("actionlog.html") && String(row.url || "").includes(shareId));
+    if (hit) { visitUrl = hit.url; break; }
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!visitUrl) throw new Error("visit did not open the action log entry");
+  console.log("visit:", visitUrl);
+  await panelClick("dismissShareExecuted");
+  const hidden = await panel(`!document.body.innerText.includes("tool call executed")`);
+  if (hidden !== true) throw new Error("dismiss did not hide the executed hint");
+  console.log("executed hint dismissed");
+}
 let after: string[] = [];
 {
   const start = Date.now();

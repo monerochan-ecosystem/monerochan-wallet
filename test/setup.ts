@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cdp, ensureSidePanel, targetByUrl } from "./cdp.js";
@@ -285,7 +285,44 @@ function shopScanIsStale(root: string): boolean {
   return status?.last_packet?.status === "catastrophic_reorg";
 }
 
-async function pointShopAtRegtest(root: string, port: number, startCmd: string) {
+async function shopHttpCode(port: number): Promise<string | null> {
+  for (const path of ["/login", "/"]) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}${path}`, { signal: AbortSignal.timeout(2000) });
+      if (r.status >= 100 && r.status < 600) return String(r.status);
+    } catch {
+      // not up yet
+    }
+  }
+  return null;
+}
+
+function logTail(path: string): string {
+  if (!existsSync(path)) return "no log at " + path;
+  const lines = readFileSync(path, "utf8").trim().split("\n");
+  return lines.slice(-15).join("\n");
+}
+
+async function waitForShop(port: number, logPath: string, timeoutMs: number): Promise<boolean> {
+  const start = Date.now();
+  let lastLog = 0;
+  while (Date.now() - start < timeoutMs) {
+    const code = await shopHttpCode(port);
+    if (code) {
+      console.log("shop up", port, code);
+      return true;
+    }
+    if (Date.now() - lastLog > 2000) {
+      lastLog = Date.now();
+      console.log("waiting for shop", port, Math.round((Date.now() - start) / 1000) + "s");
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  console.log("shop log", port, "\n" + logTail(logPath));
+  return false;
+}
+
+async function pointShopAtRegtest(root: string, port: number, startCmd: string, logPath: string) {
   const settingsPath = join(root, "wallet-caches/ScanSettings.json");
   if (!existsSync(settingsPath)) return;
   const settings = JSON.parse(readFileSync(settingsPath, "utf8"));
@@ -310,18 +347,17 @@ async function pointShopAtRegtest(root: string, port: number, startCmd: string) 
     }
   }
   console.log("restarting shop", port);
-  spawnSync("bash", ["-lc", `fuser -k ${port}/tcp >/dev/null 2>&1 || true`]);
-  spawnSync("bash", ["-lc", startCmd]);
-  const start = Date.now();
-  while (Date.now() - start < 90000) {
-    const probe = spawnSync("curl", ["-s", "-m", "2", "-o", "/dev/null", "-w", "%{http_code}", `http://127.0.0.1:${port}/`], { encoding: "utf8" });
-    const code = (probe.stdout || "").trim();
-    if (/^[1-5][0-9][0-9]$/.test(code)) {
-      console.log("shop up", port, code);
-      return;
-    }
-    if (Date.now() - start > 2000 && ((Date.now() - start) % 5000) < 600) console.log("waiting for shop", port);
-    await new Promise((r) => setTimeout(r, 500));
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    spawnSync("bash", ["-lc", `fuser -k ${port}/tcp >/dev/null 2>&1 || true`], { timeout: 5000 });
+    await new Promise((r) => setTimeout(r, 300));
+    // do not wait on the shop process. a trailing & still keeps spawnSync open.
+    const child = spawn("bash", ["-lc", startCmd.replace(/\s*&\s*$/, "")], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.unref();
+    if (await waitForShop(port, logPath, 20000)) return;
+    console.log("shop did not answer, retry", port, attempt);
   }
   throw new Error("shop did not come back on port " + port);
 }
@@ -334,6 +370,7 @@ export async function pointShopsAtRegtest(origin?: string) {
       join(projects, "monero-payment-links"),
       3003,
       "cd " + join(projects, "monero-payment-links") + " && setsid bun run production >/tmp/payment-links.log 2>&1 </dev/null &",
+      "/tmp/payment-links.log",
     );
     return;
   }
@@ -341,6 +378,7 @@ export async function pointShopsAtRegtest(origin?: string) {
     join(projects, "monero-wallet-api/standard-checkout"),
     3004,
     "cd " + join(projects, "monero-wallet-api/standard-checkout") + " && setsid bun checkout.ts >/tmp/standard-checkout.log 2>&1 </dev/null &",
+    "/tmp/standard-checkout.log",
   );
 }
 
