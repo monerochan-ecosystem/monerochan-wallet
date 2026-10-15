@@ -1,0 +1,2 @@
+according to the chrome webstore policy: "An extension must have a privacy policy if it collects user data. "
+this extension does not collect any user data. it is a piece of open source software that helps users deal with their data by themselves.
