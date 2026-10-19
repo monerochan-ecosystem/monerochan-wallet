@@ -18,6 +18,7 @@ import {
 import { router } from "../router";
 
 import { navigateToFirstWallet } from "./walletRoute";
+import { initWallets } from "../init";
 
 let seedphrase: string[] = []; //generateSeedphrase().split(" ");
 export function onboarding() {
@@ -407,7 +408,8 @@ async function finishCB() {
     // a new wallet starts on a public node. not the local default.
     node_url: "https://node.monero.fail",
   });
-  void window.wallets?.buildWallets();
+  await initWallets();
+  await window.wallets.buildWallets();
   router.navigate(walletRouteToString(WALLET_DEFAULT_ROUTE));
   location.reload();
 }

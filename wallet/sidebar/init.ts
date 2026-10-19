@@ -1,7 +1,6 @@
 import {
   openWallets,
   configureUnpacked,
-  SCAN_SETTINGS_STORE_NAME_DEFAULT,
   type InvocationState,
 } from "@spirobel/monero-wallet-api/unpacked";
 
@@ -56,12 +55,12 @@ export async function initSidebar() {
 }
 
 export async function setupFinishedYet() {
-  const scan_settings_file_content = await Bun.file(
-    SCAN_SETTINGS_STORE_NAME_DEFAULT,
-  )
-    .text()
-    .catch(() => "");
-  return !!scan_settings_file_content.length;
+  const env = await Bun.file(".env").text().catch(() => "");
+  return env.split("\n").some((line) => {
+    const [key, ...rest] = line.split("=");
+    if (typeof key !== "string") return false;
+    return key.trim() === "SEEDPHRASE" && rest.join("=").trim().length > 0;
+  });
 }
 
 export async function initToolInvocation() {
