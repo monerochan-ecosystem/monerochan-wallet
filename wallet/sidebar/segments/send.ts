@@ -38,7 +38,6 @@ let amountInputValue = "";
 let addressInputValue = "";
 let justSentTx = false;
 let ignoredSpendId: string | null = null;
-let dismissedInfoId: string | null = null;
 let dismissedStatusStamp: number | null = null;
 let executedSpendId: string | null = null;
 let executedHintDismissed = false;
@@ -318,6 +317,10 @@ export function toolInfo(t?: InvocationState | null) {
       .grey-link:hover {
         color: white;
       }
+      .destination-link.grey-link,
+      .destination-link.grey-link:hover {
+        cursor: default;
+      }
       .valid {
         color: greenyellow !important;
       }
@@ -359,14 +362,7 @@ export function toolInfo(t?: InvocationState | null) {
       <span class="tool-context">destination:</span>
       <span class="tool-value ${validClass}">${destinationDomain}</span>
     </div>
-    <a
-      class="destination-link grey-link"
-      href=${destinationLink}
-      target="_blank"
-      rel="noopener noreferrer"
-    >
-      ${destinationLink}
-    </a>
+    <div class="destination-link grey-link">${destinationLink}</div>
     <div class="tool-row">
       <span class="tool-context">clicked:</span>
       <span class="tool-value">${formatTime(clickedAt)}</span>
@@ -419,16 +415,8 @@ export function sendPlateContent() {
     ? convertAmountBigInt(open.amount)
     : null;
 
-  const showInfo = !!open && open.invocationId !== dismissedInfoId;
   const toolInfoSnippet = toolInfo(open);
-  const validitySnippet = showInfo ? validityMessage(open) : "";
-  const dismissInfoBtn = document.getElementById("dismissInfo");
-  if (dismissInfoBtn && open) {
-    const infoId = open.invocationId;
-    dismissInfoBtn.onclick = () => {
-      dismissedInfoId = infoId;
-    };
-  }
+  const validitySnippet = validityMessage(open);
   const amountInput = document.getElementById(
     "amountInput",
   ) as HTMLInputElement | null;
@@ -594,25 +582,11 @@ export function sendPlateContent() {
         .tool-action:hover {
           color: white;
         }
-        .info-with-dismiss {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-        .info-with-dismiss > .tool-action {
-          flex: none;
-          align-self: center;
-        }
       </style>
 
       ${standardAddress}
       ${coinControlIsOn() ? "" : toolInfoSnippet}
-      ${!coinControlIsOn() && validitySnippet
-        ? html`<div class="info-with-dismiss">
-            ${validitySnippet}
-            <span class="tool-action" id="dismissInfo">dismiss</span>
-          </div>`
-        : ""}
+      ${coinControlIsOn() ? "" : validitySnippet}
       ${coinControlView()}
       <div class="tool-actions">
         ${executedHintMarkup()}
