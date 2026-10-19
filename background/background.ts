@@ -1,4 +1,3 @@
-import { setupFinishedYet } from "../wallet/sidebar/init";
 import {
   openWallets,
   configureUnpacked,
@@ -22,8 +21,6 @@ let wallets: ManyScanCachesOpened | undefined;
 
 async function initWallets() {
   wallets?.stopWorker();
-  if (!(await setupFinishedYet())) return undefined;
-
   wallets = await openWallets({
     autoRetry: true,
     retryDelayMs: 1000,

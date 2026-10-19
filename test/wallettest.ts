@@ -436,30 +436,43 @@ async function main(): Promise<void> {
       await clickId("openCoinControlButton");
     }
     await waitFor("amountInput");
-    await setInput("amountInput", "0.2");
-    await setInput("addressInput", SEND_ADDR);
-    const parsed = await poll(async () => text(), (x) => !x.includes("invalid address") && x.includes("selected amount"), 20000, "parse");
-    if (!parsed) throw new Error("address never parsed");
-    sendBefore = await poolSize();
-    if (sendBefore < 0) throw new Error("pool unreadable");
-    const beforeText = await text();
-    const hadStatus = beforeText.includes("successfully sent transaction");
-    const hadFail = beforeText.includes("failed to send transaction");
-    await clickId("send-action");
-    const hit = await poll(async () => {
-      const p = await poolSize();
-      if (p === sendBefore + 1) return "pool";
-      const t = await text();
-      if (t.includes("exceeds unlocked funds") && (await spendable()) <= FUND_MIN) return "locked";
-      if (!hadStatus && t.includes("successfully sent transaction")) return "status";
-      if (!hadFail && t.includes("failed to send transaction")) return "failed";
-      return "";
-    }, (x) => x !== "", 180000, "send confirm");
-    if (hit === "pool" || hit === "status") {
-      sendConfirmed = true;
-      return;
+    for (let shot = 0; shot < 2; shot++) {
+      await setInput("amountInput", "0.2");
+      await setInput("addressInput", SEND_ADDR);
+      const parsed = await poll(async () => text(), (x) => !x.includes("invalid address") && x.includes("selected amount"), 20000, "parse");
+      if (!parsed) throw new Error("address never parsed");
+      sendBefore = await poolSize();
+      if (sendBefore < 0) throw new Error("pool unreadable");
+      const beforeText = await text();
+      const hadStatus = beforeText.includes("successfully sent transaction");
+      const hadFail = beforeText.includes("failed to send transaction");
+      await clickId("send-action");
+      const hit = await poll(async () => {
+        const p = await poolSize();
+        if (p === sendBefore + 1) return "pool";
+        const t = await text();
+        if (t.includes("exceeds unlocked funds") && (await spendable()) <= FUND_MIN) return "locked";
+        if (!hadStatus && t.includes("successfully sent transaction")) return "status";
+        if (!hadFail && t.includes("failed to send transaction")) return "failed";
+        return "";
+      }, (x) => x !== "", 180000, "send confirm");
+      if (hit === "pool" || hit === "status") {
+        sendConfirmed = true;
+        return;
+      }
+      if (shot === 0) {
+        console.log("send failed, mining 1000 for decoy depth and retrying");
+        await mineTo(DECOY_ADDR, 1000);
+        const caught = await poll(async () => {
+          const now = await connectionStatus();
+          if (now) console.log(`..scan=${now.scan} daemon=${now.daemon} ${now.status}`);
+          return now;
+        }, (s) => !!s && s.scan + 2 >= s.daemon, 120000, "scan to tip");
+        if (!caught) throw new Error("scan did not reach tip after mining");
+        continue;
+      }
+      throw new Error(`send not confirmed, pool at ${sendBefore}`);
     }
-    throw new Error(`send not confirmed, pool at ${sendBefore}`);
   }, async () => {
     return sendConfirmed ? { ok: true, detail: "confirmed" } : { ok: false, detail: "send not confirmed" };
   });
