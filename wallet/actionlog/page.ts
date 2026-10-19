@@ -167,6 +167,9 @@ const styles = html`<style>
     color: white;
     word-wrap: break-word;
   }
+  a.log-info-value {
+    color: white;
+  }
   .log-top {
     display: flex;
     align-items: center;
@@ -505,6 +508,14 @@ function addInfoRow(
   </div>`);
 }
 
+function addPageLink(rows: MiniHtmlString[], href?: string) {
+  if (!href) return;
+  rows.push(html`<div class="log-info-row">
+    <div class="log-info-label">page</div>
+    <a class="log-info-value" href="${href}" target="_blank" rel="noopener noreferrer">${href}</a>
+  </div>`);
+}
+
 function invoInfo(head: InvocationState): MiniHtmlString {
   const rows: MiniHtmlString[] = [];
   addInfoRow(rows, "error", head.error);
@@ -516,7 +527,7 @@ function invoInfo(head: InvocationState): MiniHtmlString {
   addInfoRow(rows, "no check", head.no_check);
   addInfoRow(rows, "context", head.context_domain);
   addInfoRow(rows, "destination", head.destination_domain);
-  addInfoRow(rows, "page", head.context_href);
+  addPageLink(rows, head.context_href);
   addInfoRow(rows, "found in", head.found_in);
   addInfoRow(rows, "link", head.link);
   addInfoRow(rows, "link text", head.linkText);
