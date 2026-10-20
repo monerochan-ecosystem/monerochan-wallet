@@ -224,8 +224,9 @@ async function importWalletFileCB() {
     for (const f of data.files) {
       await atomicWrite(f.filename, f.content);
     }
+    await initWallets();
+    await window.wallets!.buildWallets();
     navigateToFirstWallet();
-
     location.reload();
   };
   input.click();
@@ -409,7 +410,7 @@ async function finishCB() {
     node_url: "https://node.monero.fail",
   });
   await initWallets();
-  await window.wallets.buildWallets();
+  await window.wallets!.buildWallets();
   router.navigate(walletRouteToString(WALLET_DEFAULT_ROUTE));
   location.reload();
 }
