@@ -1,4 +1,4 @@
-import { cdp, recordTabs, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, recordTabs, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet, mineTo, nodeHeight, pointShopsAtRegtest, shopPaymentLinkId } from "./setup.js";
 // Recorded tool 001 send. Slow mode holds send_raw_transaction so the
 // "sent tx to node" hint stays on screen for 8 seconds before success.
@@ -27,7 +27,7 @@ const { ws, send } = await cdp((msg) => {
 
 // close stale checkouts so targetByUrl hits the fresh tab
 {
-  const stale: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  const stale: any[] = await (await fetch(debugHttp() + "/json/list")).json();
   for (const st of stale.filter((x) => (x.url || "").includes("checkoutId"))) {
     await send("Target.closeTarget", { targetId: st.id }).catch(() => {});
   }
@@ -37,7 +37,7 @@ const nt: any = await send("Target.createTarget", { url: startUrl });
   const start = Date.now();
   let co = "";
   while (Date.now() - start < 10000) {
-    const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
     co = list.find((x) => x.id === nt.targetId)?.url || "";
     if (co.includes("checkoutId")) break;
     await new Promise((r) => setTimeout(r, 200));
@@ -85,7 +85,7 @@ await mineTo(DECOY, 120);
 }
 
 if (SLOW) {
-  const targets: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  const targets: any[] = await (await fetch(debugHttp() + "/json/list")).json();
   const bg = targets.find((t) => String(t.url || "").includes("background.html"));
   if (!bg) throw new Error("offscreen background.html was not open");
   const bgSession = await send("Target.attachToTarget", { targetId: bg.id, flatten: true });

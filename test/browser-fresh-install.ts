@@ -2,65 +2,33 @@
 // Generate a seed, finish setup, save a node url.
 // The background must already be listening, or save fails and no heights show.
 // Usage: bun test/browser-fresh-install.ts
-// Brave must be on :9333 with dist/chrome and this empty profile.
+// The one test Brave runs on FRESH_BRAVE_PORT (default 9334) with dist/chrome and this empty profile.
 // Then save those files, start a second empty profile, and import the file.
 // The dot must go green with no extra browser restart.
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { cdp, ensureSidePanel, setDebugPort, targetByUrl, type SendFn } from "./cdp.js";
 
-const PORT = 9333;
+// one test Brave at a time. test/brave.sh closes every other Brave, wipes this profile, and starts a new one.
+// the global pid file /tmp/monerochan-test-brave.pid holds its pid.
+const PORT = Number(process.env.FRESH_BRAVE_PORT) || 9334;
 setDebugPort(PORT);
 
 function startFreshBrowser() {
-  const r = spawnSync("bash", ["-lc", `
-    set -euo pipefail
-    ROOT="${process.cwd()}"
-    PROFILE="$ROOT/testdata/fresh-install-profile"
-    EXT="$ROOT/dist/chrome"
-    pkill -f "user-data-dir=$PROFILE" || true
-    for i in $(seq 1 40); do
-      if ! ps -eo args | grep -F "user-data-dir=$PROFILE" | grep -v grep >/dev/null; then
-        break
-      fi
-      sleep 0.3
-    done
-    for i in $(seq 1 40); do
-      curl -sf -m 1 http://127.0.0.1:${PORT}/json/version >/dev/null || break
-      sleep 0.3
-    done
-    ok=0
-    for i in $(seq 1 20); do
-      if rm -rf "$PROFILE"; then ok=1; break; fi
-      sleep 0.3
-    done
-    if [ "$ok" != 1 ]; then echo "could not remove profile" >&2; exit 1; fi
-    mkdir -p "$PROFILE"
-    setsid brave-browser \
-      --user-data-dir="$PROFILE" \
-      --remote-debugging-port=${PORT} \
-      --remote-allow-origins=http://127.0.0.1:${PORT} \
-      --disable-features=DisableLoadExtensionCommandLineSwitch \
-      --enable-unsafe-extension-debugging \
-      --load-extension="$EXT" \
-      --disable-extensions-except="$EXT" \
-      --no-first-run \
-      --no-default-browser-check \
-      --start-maximized \
-      --new-window "http://127.0.0.1:18081/get_height" \
-      >"$ROOT/testdata/fresh-install-brave.log" 2>&1 < /dev/null &
-    for i in $(seq 1 40); do
-      curl -sf -m 1 http://127.0.0.1:${PORT}/json/version >/dev/null && exit 0
-      sleep 0.4
-    done
-    echo "Brave did not answer on port ${PORT}" >&2
-    exit 1
-  `], { stdio: "inherit" });
+  const root = process.cwd();
+  const r = spawnSync("bash", [
+    resolve(root, "test/brave.sh"), "ensure", "--fresh",
+    "--profile", resolve(root, "testdata/fresh-install-profile"),
+    "--port", String(PORT),
+    "--log", resolve(root, "testdata/fresh-install-brave.log"),
+    "--", "--start-maximized", "--new-window", "http://127.0.0.1:18081/get_height",
+  ], { stdio: "inherit" });
   if (r.status !== 0) throw new Error("fresh browser did not start");
 }
 
 startFreshBrowser();
-spawnSync("bash", ["test/start-regtest.sh"], { stdio: "inherit" });
+// node and shop only. SKIP_BRAVE keeps start-regtest.sh from closing the fresh Brave.
+spawnSync("bash", ["test/start-regtest.sh"], { stdio: "inherit", env: { ...process.env, SKIP_BRAVE: "1" } });
 
 const extWait = Date.now();
 while (Date.now() - extWait < 20000) {
@@ -197,7 +165,8 @@ while (Date.now() - extWait2 < 20000) {
   if (list.some((x) => (x.url || "").startsWith("chrome-extension://"))) break;
   await new Promise((r) => setTimeout(r, 300));
 }
-let chooser: { sessionId: string; backendNodeId: number } | null = null;
+type Chooser = { sessionId: string; backendNodeId: number };
+let chooser: Chooser | null = null;
 const second = await cdp((msg) => {
   if (msg.method === "Page.fileChooserOpened" && msg.sessionId && msg.params?.backendNodeId) {
     chooser = { sessionId: msg.sessionId, backendNodeId: msg.params.backendNodeId };
@@ -218,7 +187,8 @@ await panelClick("recover");
   }
   if (!ok) throw new Error("import button did not appear");
 }
-chooser = null;
+// the cdp callback sets it. the cast keeps tsc from narrowing it to null.
+chooser = null as Chooser | null;
 {
   const t = await targetByUrl("sidebar.html");
   const s = await send("Target.attachToTarget", { targetId: t.id, flatten: true });

@@ -10,13 +10,15 @@
     "firefox:content": "bun build content/content.ts --outdir dist/firefox --target browser",
     "firefox:sidebar": "bun build wallet/sidebar.html --outdir dist/firefox --target browser",
     "firefox:actionlog": "bun build wallet/actionlog.html --outdir dist/firefox --target browser",
-    "buildfirefox": "bun run firefox:background && bun run firefox:content && bun run firefox:sidebar && bun run firefox:actionlog",
+    "firefox:toolconfirm": "bun build wallet/toolconfirm.html --outdir dist/firefox --target browser",
+    "buildfirefox": "bun run firefox:background && bun run firefox:content && bun run firefox:sidebar && bun run firefox:actionlog && bun run firefox:toolconfirm",
     "chrome:background": "bun build background/offscreen/background.html --outdir dist/chrome --target browser",
     "chrome:content": "bun build content/content.ts --outdir dist/chrome --target browser",
     "chrome:sw": "bun build background/offscreen/bridge.ts --outdir dist/chrome --target browser",
     "chrome:sidebar": "bun build wallet/sidebar.html --outdir dist/chrome --target browser",
     "chrome:actionlog": "bun build wallet/actionlog.html --outdir dist/chrome --target browser",
-    "buildchrome": "bun run chrome:background && bun run chrome:sw && bun run chrome:sidebar && bun run chrome:actionlog && bun run chrome:content",
+    "chrome:toolconfirm": "bun build wallet/toolconfirm.html --outdir dist/chrome --target browser",
+    "buildchrome": "bun run chrome:background && bun run chrome:sw && bun run chrome:sidebar && bun run chrome:actionlog && bun run chrome:toolconfirm && bun run chrome:content",
     "copyunpackedchrome": "cp node_modules/@spirobel/monero-wallet-api/dist/*.wasm dist/chrome/ && cp node_modules/@spirobel/monero-wallet-api/dist/worker_unpacked.js dist/chrome/",
     "copyunpackedfirefox": "cp node_modules/@spirobel/monero-wallet-api/dist/*.wasm dist/firefox/ && cp node_modules/@spirobel/monero-wallet-api/dist/worker_unpacked.js dist/firefox/",
     "copyunpacked": "bun run copyunpackedchrome && bun run copyunpackedfirefox",
@@ -24,7 +26,7 @@
     "clean": "rm -rf ./dist"
   },
   "devDependencies": {
-    "@spirobel/monero-wallet-api": "0.6.8",
+    "@spirobel/monero-wallet-api": "0.6.15",
     "@spirobel/seedphrase": "0.3.2",
     "@types/bun": "1.3.14",
     "@types/chrome": "0.1.32"

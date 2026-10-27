@@ -10,7 +10,12 @@ bun test/browser-002.ts
 
 `test/start-regtest.sh` starts what is down. 
 - Node: `testdata/moneronode/monerod` on port 18081. `test/download-monerod.ts` fetches it. Chain data is `testdata/regtest`.
-- Brave: profile `testdata/brave-profile`, extension `dist/chrome`, debug port 9222. The flag `--enable-unsafe-extension-debugging` is required.
+- Brave: one test Brave at a time. `test/brave.sh` starts it and closes every other Brave, your own Brave too. Close nothing you need before a browser test.
+  - The pid file `/tmp/monerochan-test-brave.pid` holds the pid. It is the global mutex. A dead pid, a reused pid, or garbage in the file makes a new Brave. A stranger process is never killed.
+  - Main tests: profile `testdata/brave-profile`, extension `dist/chrome`, debug port `BRAVE_PORT`, default 9333.
+  - `browser-fresh-install` and `browser-direct-tool`: profile `testdata/fresh-install-profile`, port `FRESH_BRAVE_PORT`, default 9334. They close the main Brave. The next main test starts it again.
+  - The flag `--enable-unsafe-extension-debugging` is required.
+  - `bash test/brave.sh status` shows the pid file and every Brave. `bash test/brave.sh stop` closes all.
 - Shop: `../monero-payment-links`, command `bun run production`, port 3003. Clone `https://github.com/monerochan-ecosystem/monero-payment-links.git` only when that sibling folder is missing.
 
 

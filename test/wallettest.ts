@@ -1,4 +1,4 @@
-// Run test/start-regtest.sh when port 18081 or port 9222 does not answer.
+// Run test/start-regtest.sh when port 18081 or BRAVE_PORT (default 9333) does not answer.
 // The script does not start a second node or a second browser.
 // setup.ts calls the same script. main() calls it too.
 // monerod: testdata/moneronode/monerod from test/download-monerod.ts
@@ -8,7 +8,7 @@
 // Extension: dist/chrome
 // Brave log: testdata/brave.log
 // Shop: ../monero-payment-links via bun run production. Clone only when that folder is absent.
-import { cdp, ensureSidePanel } from "./cdp";
+import { cdp, debugHttp, ensureSidePanel } from "./cdp";
 import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser, useRegtestNodeBeforeRestart } from "./setup";
 // resetWallet restarts Brave so the background loads the new wallet.
 // Full wallet pass on the real side panel. Never opens sidebar.html as a tab.
@@ -31,11 +31,11 @@ let panelId: string;
 async function attach(): Promise<void> {
   // sidebar.html can be the real side panel or a tab. the real panel has no window id.
   // a reload closes the panel and changes the target id. attach again. skip a blank body.
-  let list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  let list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
   let cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
   if (!cands.length) {
     await ensureSidePanel(send);
-    list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    list = await (await fetch(debugHttp() + "/json/list")).json();
     cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
   }
   if (!cands.length) throw new Error("no sidebar target");
@@ -67,6 +67,8 @@ async function attach(): Promise<void> {
 }
 
 async function init(): Promise<void> {
+  // a Brave restart kills the old browser connection. open a new one.
+  try { ws?.close(); } catch {}
   const c = await cdp();
   ws = c.ws;
   send = c.send;
@@ -85,7 +87,7 @@ async function ev(expr: string): Promise<any> {
   try {
     return await run();
   } catch {
-    await attach();
+    await init();
     return await run();
   }
 }
@@ -346,6 +348,9 @@ async function main(): Promise<void> {
   // start height 3 is not the open-time value, so a stale memory read fails.
   // a typed url must not stick. put start height back to 0 for the scan tests.
   await attempt("node fields reset", async () => {
+    // a start height above the tip is lowered to the tip. a fresh chain has height 1.
+    const tip = await nodeHeight();
+    if (tip < 10) await mineTo(DECOY_ADDR, 10 - tip);
     await ensurePlate("connection");
     await waitFor("saveNodeUrl");
     await setInput("nodeUrl", NODE);
@@ -436,7 +441,9 @@ async function main(): Promise<void> {
       await clickId("openCoinControlButton");
     }
     await waitFor("amountInput");
-    for (let shot = 0; shot < 2; shot++) {
+    // each failed send mines more blocks and tries again. it fails after the last round.
+    const ROUNDS = 4;
+    for (let shot = 0; shot < ROUNDS; shot++) {
       await setInput("amountInput", "0.2");
       await setInput("addressInput", SEND_ADDR);
       const parsed = await poll(async () => text(), (x) => !x.includes("invalid address") && x.includes("selected amount"), 20000, "parse");
@@ -446,6 +453,7 @@ async function main(): Promise<void> {
       const beforeText = await text();
       const hadStatus = beforeText.includes("successfully sent transaction");
       const hadFail = beforeText.includes("failed to send transaction");
+      const noFundsBefore = beforeText.match(/not enough funds [^\n]*/)?.[0] ?? "";
       await clickId("send-action");
       const hit = await poll(async () => {
         const p = await poolSize();
@@ -454,24 +462,30 @@ async function main(): Promise<void> {
         if (t.includes("exceeds unlocked funds") && (await spendable()) <= FUND_MIN) return "locked";
         if (!hadStatus && t.includes("successfully sent transaction")) return "status";
         if (!hadFail && t.includes("failed to send transaction")) return "failed";
+        // the panel shows "not enough funds <time>" when the worker found no spendable input.
+        // a new line means this click failed. nothing else will change, so do not wait.
+        const noFunds = t.match(/not enough funds [^\n]*/)?.[0] ?? "";
+        if (noFunds && noFunds !== noFundsBefore) return "nofunds";
         return "";
-      }, (x) => x !== "", 180000, "send confirm");
+      }, (x) => x !== "", 60000, "send confirm");
       if (hit === "pool" || hit === "status") {
         sendConfirmed = true;
         return;
       }
-      if (shot === 0) {
-        console.log("send failed, mining 1000 for decoy depth and retrying");
-        await mineTo(DECOY_ADDR, 1000);
-        const caught = await poll(async () => {
-          const now = await connectionStatus();
-          if (now) console.log(`..scan=${now.scan} daemon=${now.daemon} ${now.status}`);
-          return now;
-        }, (s) => !!s && s.scan + 2 >= s.daemon, 120000, "scan to tip");
-        if (!caught) throw new Error("scan did not reach tip after mining");
-        continue;
-      }
-      throw new Error(`send not confirmed, pool at ${sendBefore}`);
+      // the worker logs the reason. print it, so a failure says why.
+      const reason = await ev(`(() => { const l = window.wallets.wallets[0]._cache.tx_logs || []; return l.length ? String(l[l.length - 1].error || "") : ""; })()`);
+      const why = `${hit || "no answer"}: ${reason || "no error logged"}`;
+      if (shot === ROUNDS - 1) throw new Error(`send failed after ${ROUNDS} rounds, ${why}`);
+      // no spendable input: the output may unlock a few blocks later. any other failure: decoy depth.
+      const blocks = hit === "nofunds" ? 12 : 1000;
+      console.log(`send failed (${why}), mining ${blocks} and retrying`);
+      await mineTo(DECOY_ADDR, blocks);
+      const caught = await poll(async () => {
+        const now = await connectionStatus();
+        if (now) console.log(`..scan=${now.scan} daemon=${now.daemon} ${now.status}`);
+        return now;
+      }, (s) => !!s && s.scan + 2 >= s.daemon, 120000, "scan to tip");
+      if (!caught) throw new Error("scan did not reach tip after mining");
     }
   }, async () => {
     return sendConfirmed ? { ok: true, detail: "confirmed" } : { ok: false, detail: "send not confirmed" };

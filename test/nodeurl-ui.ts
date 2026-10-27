@@ -1,11 +1,11 @@
-// Run test/start-regtest.sh when port 18081 or port 9222 does not answer.
+// Run test/start-regtest.sh when port 18081 or BRAVE_PORT (default 9333) does not answer.
 // Drives the connection plate in the side panel. Never opens sidebar.html as a tab.
 // TEST CONNECTION fills https or http when that form answers.
 // It does not save, so the worker node stays on the stored url.
 // Every check senses UI state plus app state first, acts on what it finds,
 // verifies the effect, and retries once from a fresh sense before failing.
 // Usage: bun test/nodeurl-ui.ts
-import { cdp, ensureSidePanel } from "./cdp";
+import { cdp, debugHttp, ensureSidePanel } from "./cdp";
 import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser, useRegtestNodeBeforeRestart } from "./setup";
 
 const LOCAL = "http://127.0.0.1:18081";
@@ -16,11 +16,11 @@ let send: (method: string, params?: Record<string, unknown>, sessionId?: string)
 let sessionId: string;
 
 async function attachRaw(): Promise<void> {
-  const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
   const cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
   if (!cands.length) {
     await ensureSidePanel(send);
-    const again: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    const again: any[] = await (await fetch(debugHttp() + "/json/list")).json();
     const found = again.filter((x) => (x.url || "").includes("sidebar.html"));
     if (!found.length) throw new Error("no sidebar target");
     cands.push(...found);
@@ -60,11 +60,11 @@ async function bringUpPanel(): Promise<void> {
 async function attach(): Promise<void> {
   // sidebar.html can be the real side panel or a tab. skip a blank body.
   // a reload changes the target id. attach again.
-  let list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  let list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
   let cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
   if (!cands.length) {
     await ensureSidePanel(send);
-    list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    list = await (await fetch(debugHttp() + "/json/list")).json();
     cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
   }
   if (!cands.length) throw new Error("no sidebar target");

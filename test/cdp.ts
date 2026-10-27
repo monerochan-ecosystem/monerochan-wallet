@@ -1,11 +1,15 @@
 export type SendFn = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<any>;
 
-let debugPort = 9222;
-export function setDebugPort(port: number): void {
-  debugPort = port;
+// BRAVE_PORT moves the tests off 9333 when the emulator or another Brave holds it.
+let port = Number(process.env.BRAVE_PORT) || 9333;
+export function setDebugPort(p: number): void {
+  port = p;
 }
-function debugHttp(): string {
-  return "http://127.0.0.1:" + debugPort;
+export function debugPort(): number {
+  return port;
+}
+export function debugHttp(): string {
+  return "http://127.0.0.1:" + port;
 }
 
 export async function cdp(onEvent?: (msg: { method?: string; params?: any; sessionId?: string }) => void): Promise<{ ws: WebSocket; send: SendFn }> {

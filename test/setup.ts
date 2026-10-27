@@ -144,17 +144,12 @@ export async function needsReorgReset(): Promise<boolean> {
   return scanned > h + 1;
 }
 
+// brave.sh stops every Brave and waits until the process is gone. its pid file is the global mutex.
+// start-regtest.sh then starts the one test Brave again.
 function restartBrave(): void {
-  const killed = spawnSync("bash", ["-lc", `
-    pid=$(ps -eo pid,args | awk '/opt\\/brave.com\\/brave\\/brave / && /testdata\\/brave-profile/ && /remote-debugging-port=9222/ && $0 !~ /type=/ {print $1; exit}')
-    if [ -n "$pid" ]; then kill "$pid"; fi
-    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-      curl -sf -m 1 http://127.0.0.1:9222/json/version >/dev/null || exit 0
-      sleep 0.4
-    done
-    exit 1
-  `], { stdio: "inherit" });
-  if (killed.status !== 0) throw new Error("Brave did not stop");
+  const script = join(dirname(fileURLToPath(import.meta.url)), "brave.sh");
+  const stopped = spawnSync("bash", [script, "stop"], { stdio: "inherit" });
+  if (stopped.status !== 0) throw new Error("Brave did not stop");
   startNodeAndBrowser();
 }
 
@@ -432,8 +427,9 @@ export async function ensureHealthyWallet(): Promise<string> {
     console.log("already spendable, skipping unlock mining");
     return addr;
   }
+  // a coinbase reward unlocks after 60 blocks.
   for (let round = 0; round < 3; round++) {
-    await mineTo(DECOY_ADDR, 12);
+    await mineTo(DECOY_ADDR, 60);
     const ok = await pollText((x) => {
       const digits = x.match(/(\d+\.\d+) XMR/)?.[1];
       return !!digits && parseFloat(digits) > 1;
