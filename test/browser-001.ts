@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cdp, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet, mineTo, pointShopsAtRegtest, shopPaymentLinkId } from "./setup.js";
 const REGTEST_NODE = "http://127.0.0.1:18081";
 const DECOY = "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr";
@@ -23,7 +23,7 @@ function assertShopNode(origin: string) {
 // Opens a fresh checkout, clicks pay, fires the slider, sends, then mines
 // with mineTo (the same generateblocks call as the regtest button) until the
 // checkout confirmation count is reached.
-// Needs Brave on :9222 with the wallet extension.
+// Needs Brave on BRAVE_PORT (default 9333) with the wallet extension.
 // The shop is ../monero-payment-links. start-regtest.sh runs bun run production there.
 // CHECKOUT_URL overrides the shop, for example http://127.0.0.1:3004/newsession
 // Usage: bun test/browser-001.ts
@@ -158,7 +158,7 @@ async function openCheckout(): Promise<string> {
   {
     const start = Date.now();
     while (Date.now() - start < 10000) {
-      const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+      const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
       co = list.find((x) => x.id === nt.targetId)?.url || "";
       if (co.includes("checkoutId")) break;
       await new Promise((r) => setTimeout(r, 200));
@@ -182,7 +182,7 @@ async function drivePayment(label: string): Promise<void> {
   const ntId: string = await openCheckout();
   // pay click with a trusted gesture (on the new checkout, not a stale tab)
   {
-    const listed: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    const listed: any[] = await (await fetch(debugHttp() + "/json/list")).json();
     const t = listed.find((x) => x.id === ntId);
     if (!t) throw new Error("new checkout tab gone");
     await send("Target.activateTarget", { targetId: t.id });

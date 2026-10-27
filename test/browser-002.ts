@@ -1,10 +1,10 @@
-import { cdp, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet } from "./setup.js";
 // Browser test for tool 002: full share through accept.
 // Clicks Add Wallet on the dashboard, accepts in the wallet, then verifies
 // a new wallet route exists in the wallets list. Shares a real view key
 // with the local regtest dashboard only.
-// Needs Brave on :9222 with the wallet extension.
+// Needs Brave on BRAVE_PORT (default 9333) with the wallet extension.
 // The shop is ../monero-payment-links. start-regtest.sh runs bun run production there.
 // Usage: bun test/browser-002.ts
 await ensureHealthyWallet();
@@ -48,7 +48,7 @@ async function pageHasAddWallet(targetId: string): Promise<boolean> {
 }
 
 async function findDashboard(): Promise<{ id: string }> {
-  const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
   for (const stale of list.filter((x) => (x.url || "").includes("checkoutId") || (x.url || "").includes("/dashboard"))) {
     await send("Target.closeTarget", { targetId: stale.id }).catch(() => {});
   }

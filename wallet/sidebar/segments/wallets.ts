@@ -20,6 +20,7 @@ import {
 import { initWallets } from "../init";
 import { textInput } from "../ui/input";
 import { openActionLogPage, toggleActionLogPage } from "../../actionlog/open";
+import { shareToolInfo } from "./toolInfo";
 let shareOpen: InvocationState | null = null;
 let shareBusyId: string | null = null;
 let executedShareId: string | null = null;
@@ -98,50 +99,18 @@ export function walletsPlate() {
 
   function shareWalletToolInfo(t?: InvocationState | null) {
     if (!t) return "";
-
-    const walletSlot = t.wallet_slot ?? 0;
-    const contextDomain = t.context_domain ?? "";
-    const contextHref = t.context_href ?? "";
-    const clickedAt = t.timestamp ?? Date.now();
-    const openTitle = shareUi?.openTitle ?? "";
     const acceptLabel = shareUi?.acceptLabel ?? "ACCEPT";
     const dismissLabel = shareUi?.dismissLabel ?? "DISMISS";
-
-    return html`<div>
-      <div class="tool-info">
-        <span class="tool-label">${openTitle}</span>
-        <div class="tool-row">
-          <span class="tool-context">context:</span>
-          <span class="tool-value">${contextDomain}</span>
-        </div>
-        <a
-          class="context-href grey-link"
-          href=${contextHref}
-          target="_blank"
-        >
-          ${contextHref}
-        </a>
-        <div class="tool-row">
-          <span class="tool-context">wallet slot:</span>
-          <span class="tool-value">${walletSlot}</span>
-        </div>
-        <div class="tool-row">
-          <span class="tool-context">domain:</span>
-          <span class="tool-value">${contextDomain}</span>
-        </div>
-        <div class="tool-row">
-          <span class="tool-context">clicked:</span>
-          <span class="tool-value">${formatTime(clickedAt)}</span>
-        </div>
-        ${t.error
-          ? html`<div class="tool-hint">${t.error}</div>`
-          : ""}
+    return shareToolInfo(
+      t,
+      html`<div style="display: contents;">
+        ${t.error ? html`<div class="tool-hint">${t.error}</div>` : ""}
         <div class="tool-actions">
           <span class="tool-action" id="acceptShareWallet">${acceptLabel}</span>
           <span class="tool-action" id="dismissShareWallet">${dismissLabel}</span>
         </div>
-      </div>
-    </div>`;
+      </div>`,
+    );
   }
 
   const hideBusy =

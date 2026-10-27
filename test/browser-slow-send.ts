@@ -1,4 +1,4 @@
-import { cdp, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet, mineTo, pointShopsAtRegtest, shopPaymentLinkId } from "./setup.js";
 // tool 001 send with the node answer held.
 // cdp pauses send_raw_transaction on the offscreen document.
@@ -26,7 +26,7 @@ const nt: any = await send("Target.createTarget", { url: startUrl });
   const start = Date.now();
   let co = "";
   while (Date.now() - start < 10000) {
-    const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
     co = list.find((x) => x.id === nt.targetId)?.url || "";
     if (co.includes("checkoutId")) break;
     await new Promise((r) => setTimeout(r, 200));
@@ -61,7 +61,7 @@ async function panelClick(elId: string): Promise<void> {
   await new Promise((rr) => setTimeout(rr, 400));
 }
 
-const targets: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+const targets: any[] = await (await fetch(debugHttp() + "/json/list")).json();
 const bg = targets.find((t) => String(t.url || "").includes("background.html"));
 if (!bg) {
   console.log(targets.map((t) => t.type + " " + t.url).join("\n"));

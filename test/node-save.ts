@@ -2,7 +2,7 @@
 // Starts from a wiped wallet, so the first save is not mid-scan.
 // Then waits until a scan is running and saves again.
 // Usage: bun test/node-save.ts
-import { cdp, ensureSidePanel } from "./cdp";
+import { cdp, debugHttp, ensureSidePanel } from "./cdp";
 import { reloadWalletBackground, resetWallet, reviveSidebar, startNodeAndBrowser, useRegtestNodeBeforeRestart } from "./setup";
 
 const LOCAL = "http://127.0.0.1:18081";
@@ -13,11 +13,11 @@ let send: (method: string, params?: Record<string, unknown>, sessionId?: string)
 let sessionId: string;
 
 async function attach(): Promise<void> {
-  let list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+  let list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
   let cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
   if (!cands.length) {
     await ensureSidePanel(send);
-    list = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    list = await (await fetch(debugHttp() + "/json/list")).json();
     cands = list.filter((x) => (x.url || "").includes("sidebar.html"));
   }
   if (!cands.length) throw new Error("no sidebar target");

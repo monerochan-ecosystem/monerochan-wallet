@@ -1,4 +1,4 @@
-import { cdp, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet, mineTo, pointShopsAtRegtest, shopPaymentLinkId } from "./setup.js";
 // one slow tool send, then a second tool send.
 // the second send must not reach the node. the first tx log still locks the coinbase.
@@ -59,7 +59,7 @@ async function openPayLink() {
   const nt: any = await send("Target.createTarget", { url: startUrl });
   const start = Date.now();
   while (Date.now() - start < 10000) {
-    const list: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+    const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
     const co = list.find((x) => x.id === nt.targetId)?.url || "";
     if (co.includes("checkoutId")) return;
     await new Promise((r) => setTimeout(r, 200));
@@ -115,7 +115,7 @@ function clickSend() {
   })()`);
 }
 
-const targets: any[] = await (await fetch("http://127.0.0.1:9222/json/list")).json();
+const targets: any[] = await (await fetch(debugHttp() + "/json/list")).json();
 const bg = targets.find((t) => String(t.url || "").includes("background.html"));
 if (!bg) throw new Error("offscreen background.html was not open");
 const bgSession = await send("Target.attachToTarget", { targetId: bg.id, flatten: true });

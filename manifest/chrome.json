@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "monerochan wallet",
   "description": "Monerochan Wallet. Still fresh. Use only small amounts for now.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "icons": {
     "16": "icons/icon16.png",
     "32": "icons/icon32.png",
@@ -14,7 +14,7 @@
     "default_path": "sidebar.html"
   },
   "host_permissions": ["<all_urls>"],
-  "permissions": ["sidePanel", "unlimitedStorage", "offscreen", "tabs"],
+  "permissions": ["sidePanel", "unlimitedStorage", "offscreen", "tabs", "webNavigation"],
   "action": {
     "default_title": "monerochan wallet",
     "default_icon": {

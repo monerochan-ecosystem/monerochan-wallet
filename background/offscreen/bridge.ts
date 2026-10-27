@@ -1,3 +1,7 @@
+import { deliverToolUrl } from "@spirobel/monero-wallet-api/tools/content";
+
+import { parseToolLink } from "@spirobel/monero-wallet-api/tools";
+
 // chrome MV3: offscreen document hosts the real background bundle
 let creating: null | Promise<void> = null;
 async function setupOffscreenDocument() {
@@ -35,8 +39,23 @@ chrome.sidePanel
 chrome.runtime.onMessage.addListener(
   (msg: { kind?: string }, sender) => {
     if (msg.kind !== "openSidebar") return;
-    const windowId = sender.tab?.windowId;
-    if (!windowId) return;
-    chrome.sidePanel.open({ windowId });
+    // extension pages (toolconfirm) have no sender.tab. open for the focused window then.
+    if (sender.tab?.windowId != null) {
+      chrome.sidePanel.open({ windowId: sender.tab.windowId });
+      return;
+    }
+    chrome.windows.getLastFocused().then((win) => {
+      if (win.id != null) chrome.sidePanel.open({ windowId: win.id }).catch(() => {});
+    }).catch(() => {});
   },
 );
+
+// a tool link opened as the tab url is no click, and a content script is too late. catch it before the page loads.
+// the worker has no window.confirm, so the confirm page asks. only its OK delivers.
+chrome.webNavigation.onBeforeNavigate.addListener((details) => {
+  if (details.frameId !== 0) return;
+  if (!parseToolLink(details.url)) return;
+  chrome.tabs.create({ url: `toolconfirm.html?confirmToolUrl=${encodeURIComponent(details.url)}` });
+  chrome.tabs.remove(details.tabId);
+});
+

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Start the regtest node and Brave when their ports do not answer.
-# Leave a running node or browser up. Do not start a second copy.
+# Start the regtest node and the shop when their ports do not answer. Then keep one test Brave.
+# Leave a running node or shop up. Do not start a second copy.
+# Brave: test/brave.sh keeps ONE test Brave and closes every other Brave.
+#   The pid file /tmp/monerochan-test-brave.pid holds its pid. It is the global mutex.
+#   SKIP_BRAVE=1 leaves the browser to the caller.
 # Download monerod with test/download-monerod.ts when testdata/moneronode/monerod is absent.
 # Do not use the monero-wallet-api binary.
 #
@@ -19,8 +22,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MONEROD="$ROOT/testdata/moneronode/monerod"
 DATA="$ROOT/testdata/regtest"
 PROFILE="$ROOT/testdata/brave-profile"
-EXT="$ROOT/dist/chrome"
 SHOP="$ROOT/../monero-payment-links"
+# BRAVE_PORT moves Brave off 9333 when the emulator or another Brave holds it.
+PORT="${BRAVE_PORT:-9333}"
 
 wait_http() {
   local url="$1"
@@ -78,26 +82,8 @@ else
   echo "payment links already up"
 fi
 
-if ! curl -sf -m 2 http://127.0.0.1:9222/json/version >/dev/null; then
-  mkdir -p "$PROFILE"
-  # setsid keeps the window after this script exits.
-  # DisableLoadExtensionCommandLineSwitch blocks --load-extension on new Chrome.
-  setsid brave-browser \
-    --user-data-dir="$PROFILE" \
-    --remote-debugging-port=9222 \
-    --remote-allow-origins=http://127.0.0.1:9222 \
-    --disable-features=DisableLoadExtensionCommandLineSwitch \
-    --enable-unsafe-extension-debugging \
-    --load-extension="$EXT" \
-    --disable-extensions-except="$EXT" \
-    --no-first-run \
-    --no-default-browser-check \
-    >"$ROOT/testdata/brave.log" 2>&1 < /dev/null &
-  if ! wait_http http://127.0.0.1:9222/json/version 40; then
-    echo "Brave did not answer on port 9222" >&2
-    exit 1
-  fi
-  echo "Brave started"
+if [ "${SKIP_BRAVE:-0}" = 1 ]; then
+  echo "Brave left to the caller"
 else
-  echo "Brave already up"
+  bash "$ROOT/test/brave.sh" ensure --profile "$PROFILE" --port "$PORT" --log "$ROOT/testdata/brave.log"
 fi
