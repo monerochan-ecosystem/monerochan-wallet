@@ -22,7 +22,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 MONEROD="$ROOT/testdata/moneronode/monerod"
 DATA="$ROOT/testdata/regtest"
 PROFILE="$ROOT/testdata/brave-profile"
-SHOP="$ROOT/../monero-payment-links"
+SHOP="${SHOP_ROOT:-$ROOT/../monero-payment-links}"
 # BRAVE_PORT moves Brave off 9333 when the emulator or another Brave holds it.
 PORT="${BRAVE_PORT:-9333}"
 

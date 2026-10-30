@@ -3,6 +3,7 @@ import {
   configureUnpacked,
   type ManyScanCachesOpened,
 } from "@spirobel/monero-wallet-api/unpacked";
+import type { ExtensionBrowser } from "@spirobel/monero-wallet-api/tools";
 
 configureUnpacked({
   workerUrl: "worker_unpacked.js",
@@ -10,9 +11,6 @@ configureUnpacked({
   dkgWasmUrl: "frost_dkg.wasm",
 });
 
-declare global {
-  var browser: typeof chrome;
-}
 if (typeof chrome !== "undefined" && typeof browser === "undefined") {
   globalThis.browser = chrome;
 }

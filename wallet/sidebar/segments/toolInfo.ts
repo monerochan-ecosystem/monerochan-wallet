@@ -34,8 +34,24 @@ export function toolInfo(t?: InvocationState | null) {
     typeof t.timestamp === "string"
       ? Date.parse(t.timestamp) || Date.now()
       : (t.timestamp ?? Date.now());
-  const openTitle =
-    getToolUiByPermissions(["spend"])?.openTitle ?? "";
+  // keep the original uri so other wallets can open it, with no destination domain.
+  // show a legacy uri as itself, not as the search page that wrapped it
+  const lower = destinationLink.toLowerCase();
+  const plain_at = lower.indexOf("monero:");
+  const escaped_at = lower.indexOf("monero%3a");
+  const legacy_at = plain_at !== -1 ? plain_at : escaped_at;
+  let legacyUri = "";
+  if (legacy_at !== -1) {
+    const tail = destinationLink.slice(legacy_at);
+    try {
+      legacyUri = new URL(
+        decodeURIComponent(plain_at !== -1 ? tail : tail.split("&")[0] ?? ""),
+      ).href;
+    } catch {}
+  }
+  const openTitle = legacyUri
+    ? "legacy monero payment uri"
+    : (getToolUiByPermissions(["spend"])?.openTitle ?? "");
 
   return html`<div class="tool-info">
     <style>
@@ -117,10 +133,14 @@ export function toolInfo(t?: InvocationState | null) {
       ${contextHref}
     </a>
     <div class="tool-row">
-      <span class="tool-context">destination:</span>
-      <span class="tool-value ${validClass}">${destinationDomain}</span>
+      <span class="tool-context">${legacyUri ? "destination (legacy):" : "destination:"}</span>
+      <span class="tool-value ${validClass}">${legacyUri ? "" : destinationDomain}</span>
     </div>
-    <div class="destination-link grey-link">${destinationLink}</div>
+    ${legacyUri
+      ? html`<a class="context-href grey-link" style="color: #007bff; width: 100%; font-size: 14px; overflow-wrap: anywhere" href="${legacyUri}" target="_blank">
+          ${legacyUri}
+        </a>`
+      : html`<div class="destination-link grey-link">${destinationLink}</div>`}
     <div class="tool-row">
       <span class="tool-context">clicked:</span>
       <span class="tool-value">${formatTime(clickedAt)}</span>
