@@ -39,6 +39,7 @@ let amountInputValue = "";
 let addressInputValue = "";
 let justSentTx = false;
 let ignoredSpendId: string | null = null;
+let lastSpendId: string | null = null;
 let dismissedStatusStamp: number | null = null;
 let executedSpendId: string | null = null;
 let executedHintDismissed = false;
@@ -277,7 +278,7 @@ export function sendPlateContent() {
   // a spend tool call arrived. switch to standard tx so the tool plate is visible
   if (open && coinControlIsOn()) forceStandardMode();
   const toolAmount = open?.amount
-    ? convertAmountBigInt(open.amount)
+    ? convertAmountBigInt(open.amount) || null
     : null;
 
   const toolInfoSnippet = toolInfo(open);
@@ -287,6 +288,8 @@ export function sendPlateContent() {
   ) as HTMLInputElement | null;
 
   if (amountInput) {
+    const newSpend = !!open && open.invocationId !== lastSpendId;
+    lastSpendId = open?.invocationId ?? null;
     amountInput.oninput = parseAmountCallback;
     if (amountInput.value.length === 0 && amountInputValue.length > 0) {
       amountInput.value = amountInputValue;
@@ -297,6 +300,10 @@ export function sendPlateContent() {
       amountInput.value = amountInputValue;
       parseAmountCallback();
       amountInput.disabled = true;
+    } else if (open && (amountInput.disabled || newSpend)) {
+      amountInput.value = "";
+      amountInput.disabled = false;
+      parseAmountCallback();
     }
   }
   const addressInput = document.getElementById(

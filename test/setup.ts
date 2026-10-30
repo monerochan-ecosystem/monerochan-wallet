@@ -23,7 +23,7 @@ const DECOY_ADDR = "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZ
 
 // The shop assigns link ids. Read one open product link at call time.
 export function shopPaymentLinkId(): string {
-  const dbPath = join(dirname(fileURLToPath(import.meta.url)), "../../monero-payment-links/monero_payments.db");
+  const dbPath = join(process.env.SHOP_ROOT || join(dirname(fileURLToPath(import.meta.url)), "../../monero-payment-links"), "monero_payments.db");
   const db = new Database(dbPath, { readonly: true });
   try {
     const row = db.query(`
@@ -361,10 +361,11 @@ export async function pointShopsAtRegtest(origin?: string) {
   const projects = join(dirname(fileURLToPath(import.meta.url)), "../..");
   const want3004 = origin?.includes(":3004");
   if (!want3004) {
+    const root = process.env.SHOP_ROOT || join(projects, "monero-payment-links");
     await pointShopAtRegtest(
-      join(projects, "monero-payment-links"),
+      root,
       3003,
-      "cd " + join(projects, "monero-payment-links") + " && setsid bun run production >/tmp/payment-links.log 2>&1 </dev/null &",
+      "cd " + root + " && setsid bun run production >/tmp/payment-links.log 2>&1 </dev/null &",
       "/tmp/payment-links.log",
     );
     return;
@@ -415,8 +416,10 @@ export async function ensureHealthyWallet(): Promise<string> {
   if (!(bal > 0)) {
     await mineTo(addr, 1);
   }
-  if ((await nodeHeight()) < 1000) {
-    await mineTo(DECOY_ADDR, 1000);
+  // a short coinbase-only chain can leave too few unlocked decoys in a sample.
+  const height = await nodeHeight();
+  if (height < 10000) {
+    await mineTo(DECOY_ADDR, 10000 - height);
   }
   // unlock spending power, skip when already spendable
   const spendable = await panelText().then((x) => {

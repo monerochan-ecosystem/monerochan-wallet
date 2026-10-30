@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { parseToolLink } from "@spirobel/monero-wallet-api/tools";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cdp, debugHttp, targetByUrl } from "./cdp.js";
@@ -8,12 +9,14 @@ const REGTEST_NODE = "http://127.0.0.1:18081";
 const DECOY = "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr";
 const here = dirname(fileURLToPath(import.meta.url));
 const runId = process.env.RUN_ID || "1";
+if (!/^[a-zA-Z0-9_-]+$/.test(runId)) throw new Error("invalid run id");
 const shotDir = join(here, "../testdata/browser-001-runs", runId);
+rmSync(shotDir, { recursive: true, force: true });
 mkdirSync(shotDir, { recursive: true });
 function shopRoot(origin: string) {
   return origin.includes(":3004")
     ? join(here, "../../monero-wallet-api/standard-checkout")
-    : join(here, "../../monero-payment-links");
+    : (process.env.SHOP_ROOT || join(here, "../../monero-payment-links"));
 }
 function assertShopNode(origin: string) {
   const settings = JSON.parse(readFileSync(join(shopRoot(origin), "wallet-caches/ScanSettings.json"), "utf8"));
@@ -28,6 +31,8 @@ function assertShopNode(origin: string) {
 // CHECKOUT_URL overrides the shop, for example http://127.0.0.1:3004/newsession
 // Usage: bun test/browser-001.ts
 await ensureHealthyWallet();
+const nodeInfo = await fetch(REGTEST_NODE + "/get_info").then((r) => r.json());
+if (nodeInfo.nettype !== "fakechain" || !nodeInfo.offline || nodeInfo.height < 10000) throw new Error("acceptance test needs an offline regtest chain with enough decoy history");
 const checkoutUrl = process.env.CHECKOUT_URL || "";
 const startUrl = checkoutUrl || `http://127.0.0.1:3003/pay/${shopPaymentLinkId()}`;
 if (checkoutUrl) await pointShopsAtRegtest(new URL(startUrl).origin);
@@ -36,6 +41,9 @@ console.log("wallet healthy, checkout " + startUrl);
 
 const { ws, send } = await cdp();
 let co = "";
+let expectedAmount = "";
+let expectedAddress = "";
+let expectedLink = "";
 
 async function onCheckout(expr: string): Promise<any> {
   const t = await targetByUrl("checkoutId");
@@ -178,7 +186,7 @@ async function shotTarget(targetId: string, name: string) {
     console.log("shot fail", name, err instanceof Error ? err.message : String(err));
   }
 }
-async function drivePayment(label: string): Promise<void> {
+async function drivePayment(label: string, kind = "001"): Promise<void> {
   const ntId: string = await openCheckout();
   // pay click with a trusted gesture (on the new checkout, not a stale tab)
   {
@@ -189,9 +197,18 @@ async function drivePayment(label: string): Promise<void> {
     await new Promise((r) => setTimeout(r, 500));
     const s = await send("Target.attachToTarget", { targetId: t.id, flatten: true });
     await send("Runtime.enable", {}, s.sessionId);
-    const r = await send("Runtime.evaluate", { expression: `(() => { const a=[...document.querySelectorAll("a")].filter(e=>e.getBoundingClientRect().width>0).find(e=>e.innerText.includes("pay with browser wallet")); if(!a) return "missing"; const b=a.getBoundingClientRect(); return JSON.stringify({x:b.x+b.width/2, y:b.y+b.height/2}); })()`, returnByValue: true }, s.sessionId);
+    const r = await send("Runtime.evaluate", { expression: `(() => { const a=[...document.querySelectorAll("a")].filter(e=>e.getBoundingClientRect().width>0).find(e=>e.innerText.includes("pay with browser wallet")); if(!a) return "missing"; const b=a.getBoundingClientRect(); return JSON.stringify({x:b.x+b.width/2, y:b.y+b.height/2, href:a.href}); })()`, returnByValue: true }, s.sessionId);
     if (r.result?.value === "missing") throw new Error("pay link missing");
-    const { x, y } = JSON.parse(r.result.value);
+    const { x, y, href } = JSON.parse(r.result.value);
+    const tool = parseToolLink(href);
+    if (tool?.tool_id !== "001") throw new Error("checkout payment link is not 001");
+    expectedAmount = tool.payload.amount;
+    expectedAddress = tool.payload.address;
+    expectedLink = kind === "001" ? href : `monero:${expectedAddress}${kind === "legacy-zero" ? "?tx_amount=0" : kind === "legacy-amount" ? `?tx_amount=${expectedAmount}` : ""}`;
+    if (kind !== "001") {
+      // change only the page fixture link. input fields are never filled by javascript.
+      await send("Runtime.evaluate", { expression: `document.querySelector('a.pay-button').href = ${JSON.stringify(expectedLink)}` }, s.sessionId);
+    }
     await send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, s.sessionId);
     await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, s.sessionId);
   }
@@ -199,7 +216,7 @@ async function drivePayment(label: string): Promise<void> {
   {
     const start = Date.now();
     while (Date.now() - start < 10000) {
-      open = String(await panel(`(() => { const al = window.wallets.actionLogOpened; const o = al.getActiveByPermissions(["spend"]); return o.length + ":" + (o[0]?.amount || ""); })()`) ?? "");
+      open = String(await panel(`(() => { const o = window.wallets.actionLogOpened.getActiveByPermissions(["spend"]); const x = o[0]; return o.length === 1 && x?.link === ${JSON.stringify(expectedLink)} && x.address === ${JSON.stringify(expectedAddress)} && x.amount === ${JSON.stringify(kind === "legacy-address" ? "" : kind === "legacy-zero" ? "0" : expectedAmount)} && (x.no_check ? ${kind !== "001"} : x.valid === "valid") ? "1:" + x.amount : ""; })()`) ?? "");
       if (open.startsWith("1:")) break;
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -211,7 +228,7 @@ async function drivePayment(label: string): Promise<void> {
   if (unlocked !== "true") await panelClick("fire");
 }
 
-async function openAndArm(label: string): Promise<void> {
+async function openAndArm(label: string, kind = "001"): Promise<void> {
     const shown = async () => (await panel(`!!document.getElementById("send-action")`)) === true;
     if (!(await shown())) {
       if ((await panel(`window.activeWalletPlate`)) === "send") await panelClick("send");
@@ -222,6 +239,24 @@ async function openAndArm(label: string): Promise<void> {
       }
     }
     if (!(await shown())) throw new Error("send form did not open");
+    if (kind === "legacy-address" || kind === "legacy-zero") {
+      // a real click and physical key events prove the field is editable.
+      await panelClick("amountInput");
+      const field = await panel(`(() => { const el = document.getElementById("amountInput"); return { disabled: el?.disabled, value: el?.value, focused: document.activeElement === el, ready: typeof el?.oninput === "function" }; })()`);
+      if (field.disabled || field.value !== "" || !field.focused || !field.ready) throw new Error("amount input is not ready for keyboard entry: " + JSON.stringify(field));
+      const t = await targetByUrl("sidebar.html");
+      const s = await send("Target.attachToTarget", { targetId: t.id, flatten: true });
+      for (const key of expectedAmount) {
+        const code = key === "." ? "Period" : `Digit${key}`;
+        const windowsVirtualKeyCode = key === "." ? 190 : key.charCodeAt(0);
+        await send("Input.dispatchKeyEvent", { type: "keyDown", key, code, windowsVirtualKeyCode, text: key }, s.sessionId);
+        await send("Input.dispatchKeyEvent", { type: "keyUp", key, code, windowsVirtualKeyCode }, s.sessionId);
+      }
+      await new Promise((r) => setTimeout(r, 250));
+      const typed = await panel(`document.getElementById("amountInput")?.value`);
+      if (typed !== expectedAmount) throw new Error("keystrokes did not fill amount: " + JSON.stringify({ typed, expectedAmount }));
+      console.log(label, "amount entered with keystrokes:", typed);
+    }
     const start = Date.now();
     let ready = false;
     let reopened = false;
@@ -266,17 +301,17 @@ async function newestExecute(): Promise<{ id: string; ok: boolean; err: string }
   return raw ? JSON.parse(raw) : null;
 }
 async function clickSend(): Promise<boolean> {
-  const clicked = await panel(`(async () => {
-    const b = document.getElementById("send-action");
-    if (!b || !b.classList.contains("action-button") || typeof b.onclick !== "function") return "not ready";
-    await b.onclick();
-    return "clicked";
-  })()`);
-  return clicked === "clicked";
+  if (await panel(`window.wallets.node_url`) !== REGTEST_NODE) throw new Error("refuse to send outside regtest");
+  const ready = await panel(`(() => { const b = document.getElementById("send-action"); return !!(b?.classList.contains("action-button") && typeof b.onclick === "function"); })()`);
+  if (!ready) return false;
+  await panelClick("send-action");
+  return true;
 }
+// use the same signed, broadcast, and confirmed payment path for all link forms.
+for (const kind of ["001", "legacy-amount", "legacy-address", "legacy-zero"]) {
 const poolBefore = await poolIds();
-await drivePayment("first");
-await openAndArm("first");
+await drivePayment(kind, kind);
+await openAndArm(kind, kind);
 let entry = "";
 let decoyRetried = false;
 {
@@ -290,8 +325,8 @@ let decoyRetried = false;
         console.log("decoy ring failed, mining 60");
         priorIds.add(result.id);
         await mineTo(DECOY, 60);
-        await drivePayment("retry");
-        await openAndArm("retry");
+        await drivePayment(kind + "-retry", kind);
+        await openAndArm(kind + "-retry", kind);
         continue;
       }
       throw new Error(result.err || "send failed");
@@ -307,13 +342,13 @@ let decoyRetried = false;
 console.log("entry:", entry || "(not found)");
 if (!entry) throw new Error("send never confirmed");
 
-{
-  const executedId = String(await panel(`(() => {
+const executedId = String(await panel(`(() => {
     const invs = Object.values(window.wallets.actionLogOpened.invocationsCache ?? {});
     const rows = invs.filter((v) => v.toolId === "001" && (v.lastType === "execute_result" || v.lastType === "execute_start"));
     rows.sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
     return rows[0]?.invocationId || "";
   })()`) || "");
+{
   const start = Date.now();
   let hint = false;
   while (Date.now() - start < 8000) {
@@ -324,7 +359,7 @@ if (!entry) throw new Error("send never confirmed");
   }
   if (!hint) throw new Error("tool call executed hint missing");
   console.log("hint: tool call executed");
-  await shotTarget((await targetByUrl("sidebar.html")).id, "executed");
+  await shotTarget((await targetByUrl("sidebar.html")).id, "executed-" + kind);
   await panelClick("visitExecuted");
   const look = Date.now();
   let visitUrl = "";
@@ -362,9 +397,18 @@ if (!entry) throw new Error("send never confirmed");
     if (info.linkIsAnchor || info.destIsAnchor) throw new Error("destination link is clickable: " + JSON.stringify(info));
     console.log("action log: page link clickable, destination not");
   }
+  // the visit above opened the action log in front. chrome pauses animation frames
+  // for the panel behind it, so bring the panel back or it never repaints.
+  await send("Target.activateTarget", { targetId: (await targetByUrl("sidebar.html")).id }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 500));
   await panelClick("dismissExecuted");
-  const hidden = await panel(`!document.body.innerText.includes("tool call executed")`);
-  if (hidden !== true) throw new Error("dismiss did not hide the executed hint");
+  let hidden = false;
+  for (let i = 0; i < 20; i++) {
+    hidden = (await panel(`!document.body.innerText.includes("tool call executed")`)) === true;
+    if (hidden) break;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!hidden) throw new Error("dismiss did not hide the executed hint");
   console.log("executed hint dismissed");
 }
 
@@ -390,8 +434,16 @@ while (Date.now() - waitStart < 180000 && !(final.paid && final.conf >= final.ne
 }
 console.log("server confirmations", final.conf + "/" + final.need, "tx", final.tx);
 if (!(final.paid && final.conf >= final.need)) throw new Error("server confirmations " + final.conf + "/" + final.need);
-await shotTarget((await targetByUrl("checkoutId")).id, "paid");
-await Bun.write(join(shotDir, "state.json"), JSON.stringify(final, null, 2));
-console.log("PASS tool 001 paid and verified");
+if (!final.tx) throw new Error("checkout has no transaction hash");
+const chain = await fetch(REGTEST_NODE + "/get_transactions", {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ txs_hashes: [final.tx] }),
+}).then((r) => r.json());
+if (chain.txs?.[0]?.in_pool !== false || chain.txs?.[0]?.tx_hash !== final.tx) throw new Error("payment is not on chain: " + JSON.stringify(chain));
+await shotTarget((await targetByUrl("checkoutId")).id, "paid-" + kind);
+await Bun.write(join(shotDir, kind + "-state.json"), JSON.stringify({ ...final, kind, address: expectedAddress, amount: expectedAmount, invocationId: executedId, block_height: chain.txs[0].block_height }, null, 2));
+console.log("PASS " + kind + " paid and verified on chain");
+priorIds.add(executedId);
+}
 ws.close();
 process.exit(0);

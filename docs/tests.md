@@ -26,5 +26,7 @@ bun test/browser-002.ts
 - Do not trust a click. A send proves itself by the pool or by `execute_result`.
 - This regtest node moves only when the test mines. Change locks for 10 blocks. A coinbase locks for 60. Mine before the next send, and mine to empty the pool.
 - After a reorg, reset the wallet before any mine. Then restart Brave. The background keeps the old wallet until Brave starts again.
-- `browser-001` reads an open product link from `../monero-payment-links/monero_payments.db`. Do not hardcode a link id.
+- `browser-001` tests a checked `001` link, a legacy URI with an amount, a legacy URI without an amount, and a legacy URI with zero amount. The last two cases enter the amount with key-down/key-up events. All four use real SEND clicks and require checkout payment confirmation plus a transaction on the regtest chain.
+- `browser-direct-tool` also checks a `monero:` uri carried in a page parameter, zero amounts, draft clearing on a new address-only call, and the sidebar width. It does not send transactions.
+- `browser-001` reads an open product link from the shop database. Do not hardcode a link id. Set `SHOP_ROOT` to an isolated copy of the shop under `testdata/` to keep its database, keys, and wallet caches separate from the normal shop.
 - `browser-002` needs the dashboard wallets page. Log in with `ADMIN_SECRET` from the shop `.env` when that page is missing.
