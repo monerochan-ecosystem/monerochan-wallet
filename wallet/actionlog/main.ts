@@ -4,8 +4,8 @@ import { router } from "./router";
 
 const container = document.getElementById("container");
 if (!container) throw new Error("Could not find container element");
+await initActionLogPage();
 renderRoot({
   component: () => html`<div class="log-root">${router.component}</div>`,
   container,
 });
-await initActionLogPage();

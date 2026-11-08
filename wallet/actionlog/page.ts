@@ -1,13 +1,57 @@
 import {
   getToolUiByPermissions,
-  sendToBackground,
   type ActionLogEvent,
   type InvocationState,
   type TxLog,
 } from "@spirobel/monero-wallet-api/unpacked";
 import { flatten, html, type MiniHtmlString } from "../../mininext/mininext";
-import { actionLog } from "./init";
+import { actionLog, actionLogHeight, actionLogWallets } from "./init";
 import { router } from "./router";
+import { formatConfirmationEta, minedSpendHeight, txLogConfirmationEta } from "../sidebar/segments/toolInfo";
+
+export type LogWallet = {
+  primary_address: string;
+  wallet_route?: string;
+  wallet_name?: string;
+};
+
+type InvocationWallet = Pick<
+  InvocationState,
+  "toolId" | "wallet_to_send_from_pa" | "wallet_slot" | "context_domain"
+>;
+
+export function matchesWallet(
+  row: InvocationWallet,
+  selectedWallet: string,
+  wallets: LogWallet[],
+  txWallet?: string,
+): boolean {
+  if (!selectedWallet) return true;
+  const source = row.wallet_to_send_from_pa || txWallet;
+  if (source) return source === selectedWallet;
+  if (row.toolId !== "002" || row.context_domain === undefined) return false;
+
+  // share calls use the main wallet for the page domain and slot
+  const route = `main/${row.context_domain}/single/${row.wallet_slot ?? 0}`;
+  return wallets.some(
+    (wallet) =>
+      wallet.primary_address === selectedWallet && wallet.wallet_route === route,
+  );
+}
+
+export function walletFilterOptions(wallets: LogWallet[]) {
+  const routes = new Map<string, string>();
+  for (const wallet of wallets) {
+    const route = wallet.wallet_route?.trim();
+    if (wallet.primary_address && route) routes.set(wallet.primary_address, route);
+  }
+  return [
+    { value: "", label: "all wallets" },
+    ...[...routes].map(([value, label]) => ({ value, label })),
+  ];
+}
+
+let walletFilter = new URLSearchParams(globalThis.window?.location?.search).get("wallet") ?? "";
 
 type LogTab = "history" | "success" | "discarded" | "txlog";
 let logTab: LogTab = "history";
@@ -17,22 +61,28 @@ let edgeLeftCount = 0;
 let edgeRightCount = 0;
 const PAGE_SIZE = 5;
 
-type TxLogRow = { wallet: string; log: TxLog & { index: number } };
-let txlogCache: TxLogRow[] | null = null;
+type TxLogRow = {
+  wallet: string;
+  log: TxLog & { index: number };
+  minedHeight?: number;
+};
 
-async function refreshTxLogs() {
-  try {
-    const res = (await sendToBackground("worker.getTxLogs", null)) as {
-      tx_logs?: { primary_address: string; tx_logs: (TxLog & { index: number })[] }[];
-    } | null;
-    const rows: TxLogRow[] = [];
-    for (const w of res?.tx_logs ?? [])
-      for (const log of w.tx_logs ?? [])
-        rows.push({ wallet: w.primary_address, log });
-    txlogCache = rows;
-  } catch {
-    txlogCache = [];
-  }
+function txLogs(): TxLogRow[] {
+  return actionLogWallets().flatMap((wallet) => {
+    const cache = wallet.cache;
+    return wallet.tx_logs.map((log, index) => {
+      const inputs = (log.inputs_index ?? []).flatMap((id) => {
+        const input = cache.outputs[id];
+        const owner = cache.pending_spent_utxos?.[id];
+        return input && (owner === undefined || owner === index) ? [input] : [];
+      });
+      return {
+        wallet: wallet.primary_address,
+        log: { ...log, index },
+        minedHeight: minedSpendHeight(inputs),
+      };
+    });
+  });
 }
 
 function formatTime(timestamp?: string | number) {
@@ -63,6 +113,24 @@ const styles = html`<style>
     max-width: 720px;
     margin: 0 auto;
     padding: 0 16px 32px;
+  }
+  .log-tx-controls {
+    display: flex;
+    gap: 12px;
+    flex: 1 1 290px;
+    min-width: 0;
+  }
+  .log-wallet-filter {
+    min-width: 0;
+    flex: 1;
+    padding: 10px 8px;
+    border: 2px solid rgba(255, 255, 255, 0.3);
+    border-radius: 4px;
+    background: #333;
+    color: white;
+    font: inherit;
+    font-size: 16px;
+    color-scheme: dark;
   }
   .log-title {
     font-size: 18px;
@@ -108,6 +176,9 @@ const styles = html`<style>
   .log-jump:hover {
     color: white;
     border-color: rgba(255, 255, 255, 0.6);
+  }
+  .log-info .log-jump {
+    margin-bottom: 4px;
   }
   .log-row {
     border: 2px solid rgba(255, 255, 255, 0.2);
@@ -232,10 +303,17 @@ const styles = html`<style>
   }
 </style>`;
 
-function tabRows(): InvocationState[] {
-  const all = [...(actionLog()?.invocations() ?? [])].sort((a, b) =>
-    (b.timestamp ?? "").localeCompare(a.timestamp ?? ""),
-  );
+function tabRows(logs: TxLogRow[]): InvocationState[] {
+  const all = (actionLog()?.invocations() ?? [])
+    .filter((row) =>
+      matchesWallet(
+        row,
+        walletFilter,
+        actionLogWallets(),
+        txlogForInvocation(row.invocationId, logs)?.wallet,
+      ),
+    )
+    .sort((a, b) => (b.timestamp ?? "").localeCompare(a.timestamp ?? ""));
   if (logTab === "success")
     return all.filter((r) => r.status === "done");
   if (logTab === "discarded")
@@ -245,16 +323,14 @@ function tabRows(): InvocationState[] {
   return all;
 }
 
-function ensureTxLogs() {
-  if (txlogCache === null) void refreshTxLogs();
+function txlogRows(logs: TxLogRow[]): TxLogRow[] {
+  return logs
+    .filter((row) => !walletFilter || row.wallet === walletFilter)
+    .sort((a, b) => b.log.timestamp - a.log.timestamp);
 }
 
-function txlogRows(): TxLogRow[] {
-  return [...(txlogCache ?? [])].sort((a, b) => b.log.timestamp - a.log.timestamp);
-}
-
-function txlogForInvocation(invocationId: string): TxLogRow | null {
-  const rows = (txlogCache ?? []).filter(
+function txlogForInvocation(invocationId: string, logs: TxLogRow[]): TxLogRow | null {
+  const rows = logs.filter(
     (row) => row.log.invocationId === invocationId,
   );
   rows.sort((a, b) => b.log.timestamp - a.log.timestamp);
@@ -279,6 +355,13 @@ function txStatus(log: TxLogRow["log"]): string {
   if (log.sendResult?.status) return log.sendResult.status;
   if (log.error) return "failed";
   return "no result";
+}
+
+function txEtaLine(row: TxLogRow) {
+  const eta = txLogConfirmationEta(row.log, actionLogHeight(), row.minedHeight);
+  return eta
+    ? html`<div class="log-meta">confirmation ETA: ${formatConfirmationEta(eta)}</div>`
+    : "";
 }
 
 function txlogItem(row: TxLogRow) {
@@ -306,10 +389,41 @@ function txlogItem(row: TxLogRow) {
         : ""}
       <span class="log-address">wallet: ${row.wallet.slice(0, 12)}… height: ${log.height ?? ""}</span>
     </div>
+    ${txEtaLine(row)}
     ${log.invocationId
       ? html`<div class="log-jump" id="${toolBtn}">tool call</div>`
       : ""}
   </div>`;
+}
+
+function walletDropdown(): MiniHtmlString {
+  const select = document.getElementById("log-wallet") as HTMLSelectElement | null;
+  if (select) {
+    const options = walletFilterOptions(actionLogWallets());
+    // Set native options directly. The renderer uses spans for dynamic text.
+    if (
+      select.options.length !== options.length ||
+      options.some((option, index) =>
+        select.options[index]?.value !== option.value ||
+        select.options[index]?.text !== option.label,
+      )
+    ) {
+      select.replaceChildren(
+        ...options.map((option) => new Option(option.label, option.value)),
+      );
+    }
+    if (select.value !== walletFilter) select.value = walletFilter;
+    select.title = select.selectedOptions[0]?.text ?? "";
+    select.onfocus = () => {
+      pageInputFocused = false;
+    };
+    select.onchange = () => {
+      walletFilter = select.value;
+      logPage = 1;
+      pageInputFocused = false;
+    };
+  }
+  return html`<select class="log-wallet-filter" id="log-wallet" aria-label="wallet"></select>`;
 }
 
 function attachListHandlers(pages: number) {
@@ -321,7 +435,6 @@ function attachListHandlers(pages: number) {
         pageInputFocused = false;
         logTab = tab;
         logPage = 1;
-        if (tab === "txlog") void refreshTxLogs();
       };
   }
   const prev = document.getElementById("log-prev");
@@ -329,18 +442,16 @@ function attachListHandlers(pages: number) {
     prev.onclick = () => {
       pageInputFocused = false;
       logPage = Math.max(1, logPage - 1);
-      if (logTab === "txlog") void refreshTxLogs();
     };
   const next = document.getElementById("log-next");
   if (next)
     next.onclick = () => {
       pageInputFocused = false;
       logPage = Math.min(pages, logPage + 1);
-      if (logTab === "txlog") void refreshTxLogs();
     };
   document.onkeydown = (ev) => {
     const tag = (ev.target as HTMLElement | null)?.tagName;
-    if (tag === "INPUT" || tag === "TEXTAREA") return;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     if (ev.key === "ArrowLeft" || ev.key === "ArrowRight") {
       pageInputFocused = false;
@@ -348,7 +459,6 @@ function attachListHandlers(pages: number) {
         ev.key === "ArrowLeft"
           ? Math.max(1, logPage - 1)
           : Math.min(pages, logPage + 1);
-      if (logTab === "txlog") void refreshTxLogs();
       return;
     }
     const tabs: Record<string, LogTab> = {
@@ -362,7 +472,6 @@ function attachListHandlers(pages: number) {
     pageInputFocused = false;
     logTab = tab;
     logPage = 1;
-    if (tab === "txlog") void refreshTxLogs();
   };
   const input = document.getElementById("log-page") as HTMLInputElement | null;
   if (input) {
@@ -373,7 +482,6 @@ function attachListHandlers(pages: number) {
       const n = parseInt(input.value, 10);
       if (!Number.isFinite(n)) return;
       logPage = Math.min(pages, Math.max(1, n));
-      if (logTab === "txlog") void refreshTxLogs();
     };
     input.onkeydown = (ev) => {
       if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") {
@@ -416,22 +524,28 @@ function attachListHandlers(pages: number) {
 }
 
 function listPage(): MiniHtmlString {
-  ensureTxLogs();
+  if (walletFilter && !walletFilterOptions(actionLogWallets()).some((option) => option.value === walletFilter)) {
+    walletFilter = "";
+    logPage = 1;
+  }
+  const logs = txLogs();
   const isTx = logTab === "txlog";
-  const total = isTx ? txlogRows().length : tabRows().length;
+  const transactions = isTx ? txlogRows(logs) : [];
+  const calls = isTx ? [] : tabRows(logs);
+  const total = isTx ? transactions.length : calls.length;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   if (logPage > pages) logPage = pages;
   if (logPage < 1) logPage = 1;
   const start = (logPage - 1) * PAGE_SIZE;
   const items = isTx
-    ? txlogRows()
+    ? transactions
         .slice(start, start + PAGE_SIZE)
         .map(txlogItem)
-    : tabRows()
+    : calls
         .slice(start, start + PAGE_SIZE)
         .map((row) => {
           const id = `row-${row.invocationId}`;
-          const tx = txlogForInvocation(row.invocationId);
+          const tx = txlogForInvocation(row.invocationId, logs);
           const txBtn = `txbtn-${row.invocationId}`;
           const el = document.getElementById(id);
           if (el) {
@@ -459,6 +573,7 @@ function listPage(): MiniHtmlString {
           ? html`<span class="log-address">${row.address}</span>`
           : ""}
       </div>
+      ${row.toolId === "001" && tx ? txEtaLine(tx) : ""}
       ${tx ? html`<div class="log-jump" id="${txBtn}">txlog</div>` : ""}
     </div>`;
         });
@@ -476,11 +591,17 @@ function listPage(): MiniHtmlString {
     ${total
       ? flatten(items)
       : html`<div class="log-empty">${isTx ? "no sends" : "no tool calls"}</div>`}
+    ${walletFilter && !isTx
+      ? html`<div class="log-meta">Calls with no wallet are shown under all wallets.</div>`
+      : ""}
     <div class="log-tabs">
       <div class="log-tab${logTab === "history" ? " log-tab-active" : ""}" id="log-tab-history">history</div>
       <div class="log-tab${logTab === "success" ? " log-tab-active" : ""}" id="log-tab-success">success</div>
       <div class="log-tab${logTab === "discarded" ? " log-tab-active" : ""}" id="log-tab-discarded">discarded</div>
-      <div class="log-tab${logTab === "txlog" ? " log-tab-active" : ""}" id="log-tab-txlog">txlog</div>
+      <div class="log-tx-controls">
+        <div class="log-tab${logTab === "txlog" ? " log-tab-active" : ""}" id="log-tab-txlog">txlog</div>
+        ${walletDropdown()}
+      </div>
     </div>
   </div>`;
 }
@@ -516,7 +637,8 @@ function addPageLink(rows: MiniHtmlString[], href?: string) {
   </div>`);
 }
 
-function invoInfo(head: InvocationState): MiniHtmlString {
+function invoRows(head?: InvocationState | null): MiniHtmlString[] {
+  if (!head) return [];
   const rows: MiniHtmlString[] = [];
   addInfoRow(rows, "error", head.error);
   addInfoRow(rows, "amount", head.amount);
@@ -532,8 +654,27 @@ function invoInfo(head: InvocationState): MiniHtmlString {
   addInfoRow(rows, "link", head.link);
   addInfoRow(rows, "link text", head.linkText);
   addInfoRow(rows, "time", formatTime(head.timestamp));
-  if (!rows.length) return html``;
-  return html`<div class="log-info">${flatten(rows)}</div>`;
+  return rows;
+}
+
+function invoInfo(
+  rows: MiniHtmlString[],
+  extra?: MiniHtmlString,
+): MiniHtmlString {
+  if (!rows.length && !extra) return html``;
+  return html`<div class="log-info">${flatten(rows)}${extra ?? ""}</div>`;
+}
+
+function txInfoRows(log: TxLog, wallet: string): MiniHtmlString[] {
+  const rows: MiniHtmlString[] = [];
+  addInfoRow(rows, "time", formatTime(log.timestamp));
+  const payments = (log.payments ?? [])
+    .map((payment) => `${payment.amount ?? ""} ${payment.address ?? ""}`)
+    .join(" | ");
+  addInfoRow(rows, "result", [log.error ?? "", payments].filter(Boolean).join(" "));
+  addInfoRow(rows, "inputs", (log.inputs_index ?? []).join(", "));
+  addInfoRow(rows, "wallet", wallet);
+  return rows;
 }
 
 function goHome() {
@@ -542,12 +683,11 @@ function goHome() {
 
 function detailPage(invocationId: string): MiniHtmlString {
   document.onkeydown = null;
-  ensureTxLogs();
   const home = document.getElementById("log-home");
   if (home) home.onclick = goHome;
   const back = document.getElementById("log-back");
   if (back) back.onclick = goHome;
-  const tx = txlogForInvocation(invocationId);
+  const tx = txlogForInvocation(invocationId, txLogs());
   const txBtn = document.getElementById("open-txlog");
   if (txBtn && tx) txBtn.onclick = () => openTxRow(tx);
 
@@ -563,8 +703,11 @@ function detailPage(invocationId: string): MiniHtmlString {
     <div class="log-home" id="log-home">action log</div>
     <div class="log-title">${head ? titleFor(head) : "tool call"}</div>
     <div class="log-status">${status}</div>
-    ${head ? invoInfo(head) : ""}
-    ${tx ? html`<div class="log-jump" id="open-txlog">txlog</div>` : ""}
+    ${invoInfo(
+      invoRows(head),
+      tx ? html`<div class="log-jump" id="open-txlog">txlog</div>` : undefined,
+    )}
+    ${head?.toolId === "001" && tx ? txEtaLine(tx) : ""}
     ${evs.length
       ? flatten(evs.map(eventLine))
       : html`<div class="log-empty">no events</div>`}
@@ -574,13 +717,12 @@ function detailPage(invocationId: string): MiniHtmlString {
 
 function txlogPage(wallet: string, index: string): MiniHtmlString {
   document.onkeydown = null;
-  ensureTxLogs();
   const home = document.getElementById("log-home");
   if (home) home.onclick = goHome;
   const back = document.getElementById("log-back");
   if (back) back.onclick = goHome;
   const row =
-    (txlogCache ?? []).find(
+    txLogs().find(
       (item) => item.wallet === wallet && String(item.log.index) === index,
     ) ?? null;
   const toolBtn = document.getElementById("open-tool-call");
@@ -589,25 +731,20 @@ function txlogPage(wallet: string, index: string): MiniHtmlString {
     toolBtn.onclick = () => openToolCall(invocationId);
   }
   const log = row?.log;
-  const payments = (log?.payments ?? [])
-    .map((p) => `${p.amount ?? ""} ${p.address ?? ""}`)
-    .join(" | ");
   return html`<div class="log-page">
     ${styles}
     <div class="log-home" id="log-home">action log</div>
     <div class="log-title">txlog</div>
     <div class="log-status">${log ? txStatus(log) : ""}</div>
     ${log
-      ? html`<div class="log-info">
-          <div>${formatTime(log.timestamp)}</div>
-          <div class="log-address">${log.error ?? ""} ${payments}</div>
-          <div class="log-address">inputs: ${(log.inputs_index ?? []).join(", ")}</div>
-          <div class="log-address">wallet: ${wallet}</div>
-        </div>`
+      ? invoInfo(
+          txInfoRows(log, wallet),
+          log.invocationId
+            ? html`<div class="log-jump" id="open-tool-call">tool call</div>`
+            : undefined,
+        )
       : html`<div class="log-empty">no send</div>`}
-    ${log?.invocationId
-      ? html`<div class="log-jump" id="open-tool-call">tool call</div>`
-      : ""}
+    ${row ? txEtaLine(row) : ""}
     <div class="log-back" id="log-back">back</div>
   </div>`;
 }
