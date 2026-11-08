@@ -1,8 +1,11 @@
 import {
   openWallets,
   configureUnpacked,
+  openScanSettingsFile,
+  writeScanSettingsFileDefaultLocation,
   type InvocationState,
 } from "@spirobel/monero-wallet-api/unpacked";
+import { WALLET_DEFAULT_ROUTE, walletRouteFromString, walletRouteToString } from "@spirobel/seedphrase";
 
 configureUnpacked({
   workerUrl: "worker_unpacked.js",
@@ -13,13 +16,69 @@ import { router } from "./router";
 import { lowerButtonIds } from "./segments/walletLower";
 import { removeActive } from "./ui/buttons";
 import {
-  navigateToFirstWallet,
+  allWallets,
   setConnectionStatus,
 } from "./segments/walletRoute";
 
 if (typeof chrome !== "undefined" && typeof browser === "undefined") {
   globalThis.browser = chrome;
 }
+
+function normalizeRoute(route: string): string {
+  return route.trim().replace(/^\/+/, "");
+}
+
+export function chooseSelectedWalletRoute(savedRoute: string, wallets: { wallet_route?: string }[]): string {
+  const routes = wallets
+    .map((wallet) => normalizeRoute(wallet.wallet_route ?? ""))
+    .filter((route) => walletRouteFromString(route).ok);
+  const saved = normalizeRoute(savedRoute);
+  return routes.find((route) => route === saved)
+    ?? routes[0]
+    ?? walletRouteToString(WALLET_DEFAULT_ROUTE);
+}
+
+async function readSelection(): Promise<string> {
+  return (await openScanSettingsFile())?.selected_wallet ?? "";
+}
+
+async function writeSelection(route: string): Promise<void> {
+  await writeScanSettingsFileDefaultLocation({
+    writeCallback: (settings) => { settings.selected_wallet = route; },
+  });
+}
+
+export class SelectedWalletRouteStore {
+  private lastSavedRoute: string | undefined;
+
+  constructor(
+    private read: () => Promise<string> = readSelection,
+    private write: (route: string) => Promise<unknown> = writeSelection,
+  ) {}
+
+  async restore(wallets: { wallet_route?: string }[]): Promise<string> {
+    const saved = await this.read().catch(() => "");
+    const route = chooseSelectedWalletRoute(saved, wallets);
+    this.lastSavedRoute = saved.trim() === route ? route : undefined;
+    return route;
+  }
+
+  async save(path: string, wallets: { wallet_route?: string }[]): Promise<void> {
+    const route = normalizeRoute(path);
+    if (!walletRouteFromString(route).ok) return;
+    if (!wallets.some((wallet) => normalizeRoute(wallet.wallet_route ?? "") === route)) return;
+    if (route === this.lastSavedRoute) return;
+    this.lastSavedRoute = route;
+    try {
+      await this.write(route);
+    } catch (error) {
+      if (this.lastSavedRoute === route) this.lastSavedRoute = undefined;
+      throw error;
+    }
+  }
+}
+
+export const selectedWalletRouteStore = new SelectedWalletRouteStore();
 
 function log() {
   return window.wallets?.actionLogOpened;
@@ -44,14 +103,12 @@ export async function initWallets() {
 }
 
 export async function initSidebar() {
-  if (await setupFinishedYet()) {
-    navigateToFirstWallet();
-  } else {
+  if (!(await setupFinishedYet())) {
     router.navigate("/onboarding");
     return;
   }
   await initWallets();
-  await initToolInvocation();
+  router.navigate(await selectedWalletRouteStore.restore(allWallets()));
 }
 
 export async function setupFinishedYet() {
