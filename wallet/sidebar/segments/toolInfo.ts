@@ -1,7 +1,7 @@
 // tool call info plates. moved out of the plates so the toolconfirm page can show the same thing.
 // no side effects on import.
 import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/tools";
-import type { InvocationState } from "@spirobel/monero-wallet-api/unpacked";
+import type { FoundTransaction, InvocationState, Output, TxLog } from "@spirobel/monero-wallet-api/unpacked";
 import { html, type MiniValue } from "../../../mininext/mininext";
 
 export function formatTime(timestamp: number | string, block_timestamp = false) {
@@ -20,6 +20,104 @@ export function formatTime(timestamp: number | string, block_timestamp = false) 
     minute: "2-digit",
     hour12: false,
   });
+}
+
+export const MONERO_BLOCK_TIME_SECONDS = 120;
+const NORMAL_CONFIRMATION_BLOCKS = 10;
+const COINBASE_CONFIRMATION_BLOCKS = 60;
+
+type HeightStatus = {
+  sync?: { daemon_height?: number };
+  last_packet?: { daemon_height?: number };
+};
+export type ConfirmationInput = Pick<Output, "spent_block_height" | "spent_in_tx_hash">;
+export type ConfirmationEta = {
+  currentHeight: number;
+  expectedHeight: number;
+  blocksLeft: number;
+  minutes: number;
+};
+
+function isHeight(height: number | undefined): height is number {
+  return height !== undefined && Number.isSafeInteger(height) && height >= 0;
+}
+
+export function confirmationChainHeight(status?: HeightStatus | null): number | undefined {
+  const heights = [status?.sync?.daemon_height, status?.last_packet?.daemon_height]
+    .filter((height): height is number => isHeight(height) && height > 0);
+  return heights.length ? Math.max(...heights) : undefined;
+}
+
+export function confirmationEta(
+  expectedHeight: number | undefined,
+  currentHeight: number | undefined,
+  confirmationBlocks: 10 | 60 = NORMAL_CONFIRMATION_BLOCKS,
+): ConfirmationEta | null {
+  if (!isHeight(expectedHeight) || !isHeight(currentHeight) || currentHeight === 0)
+    return null;
+  const blocksLeft = expectedHeight - currentHeight;
+  // a larger gap means the transaction and node heights do not agree
+  if (blocksLeft <= 0 || blocksLeft > confirmationBlocks) return null;
+  return {
+    currentHeight,
+    expectedHeight,
+    blocksLeft,
+    minutes: blocksLeft * MONERO_BLOCK_TIME_SECONDS / 60,
+  };
+}
+
+export function minedSpendHeight(
+  inputs: ConfirmationInput[],
+  txHash?: string,
+): number | undefined {
+  let height: number | undefined;
+  for (const input of inputs) {
+    if (!input.spent_in_tx_hash || (txHash && input.spent_in_tx_hash !== txHash)) continue;
+    if (isHeight(input.spent_block_height))
+      height = Math.max(height ?? 0, input.spent_block_height);
+  }
+  return height;
+}
+
+export function pendingTransactionEta(
+  tx: Pick<FoundTransaction, "status" | "tx_hash"> & {
+    inputs: ConfirmationInput[];
+    outputs: Pick<Output, "is_miner_tx">[];
+  },
+  currentHeight: number | undefined,
+): ConfirmationEta | null {
+  if (tx.status.status !== "pending") return null;
+  let expectedHeight = tx.status.unlock_height;
+  if (!isHeight(expectedHeight) || expectedHeight === 0) {
+    // a send with no change output has no output unlock height
+    const minedHeight = minedSpendHeight(tx.inputs, tx.tx_hash);
+    if (minedHeight === undefined) return null;
+    expectedHeight = minedHeight + NORMAL_CONFIRMATION_BLOCKS;
+  }
+  const confirmationBlocks = tx.outputs.some((output) => output.is_miner_tx)
+    ? COINBASE_CONFIRMATION_BLOCKS
+    : NORMAL_CONFIRMATION_BLOCKS;
+  return confirmationEta(expectedHeight, currentHeight, confirmationBlocks);
+}
+
+export function txLogConfirmationEta(
+  log: Pick<TxLog, "height" | "error" | "sendResult">,
+  currentHeight: number | undefined,
+  minedHeight?: number,
+): ConfirmationEta | null {
+  if (log.error || (log.sendResult && log.sendResult.status !== "OK")) return null;
+  if (!isHeight(currentHeight) || currentHeight === 0) return null;
+  if (isHeight(minedHeight))
+    return confirmationEta(minedHeight + NORMAL_CONFIRMATION_BLOCKS, currentHeight);
+  if (!isHeight(log.height) || log.height > currentHeight) return null;
+  // until mined, assume inclusion in the next block. do not count pool time as confirmations
+  const expectedHeight = currentHeight + NORMAL_CONFIRMATION_BLOCKS;
+  return confirmationEta(expectedHeight, currentHeight);
+}
+
+export function formatConfirmationEta(eta: ConfirmationEta): string {
+  const blocks = eta.blocksLeft === 1 ? "block" : "blocks";
+  return `~${eta.minutes} min (${eta.blocksLeft} ${blocks} left; height ${eta.currentHeight} to ${eta.expectedHeight})`;
 }
 
 export function toolInfo(t?: InvocationState | null) {
