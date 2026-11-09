@@ -19,6 +19,8 @@ import {
 import { walletRouteToString, type WalletRoute } from "@spirobel/seedphrase";
 
 declare global {
+  // firefox calls the extension api browser. init sets it from chrome when needed.
+  var browser: typeof chrome;
   interface Window {
     walletRouteParams?: WalletRouteParams | null;
     activeWalletPlate?: LowerButtonId | null;

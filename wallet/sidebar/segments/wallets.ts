@@ -10,7 +10,7 @@ import {
 import { flatten, html, type MiniHtmlString } from "../../../mininext/mininext";
 import { router } from "../router";
 import { rightLower, tactileContentPlate } from "../ui/content";
-import { allWallets, navigateToFirstWallet } from "./walletRoute";
+import { allWallets, currentlySelectedWallet, navigateToFirstWallet } from "./walletRoute";
 import {
   getWalletSecret,
   walletRouteFromString,
@@ -148,7 +148,7 @@ export function walletsPlate() {
   }
   const logBtn = document.getElementById("openActionLog");
   if (logBtn) {
-    logBtn.onclick = () => toggleActionLogPage();
+    logBtn.onclick = () => toggleActionLogPage(currentlySelectedWallet()?.primary_address);
   }
   const dismissShareExecuted = document.getElementById("dismissShareExecuted");
   if (dismissShareExecuted) {
@@ -160,7 +160,7 @@ export function walletsPlate() {
   if (visitShareExecuted && executedShareId) {
     const visitId = executedShareId;
     visitShareExecuted.onclick = () => {
-      void openActionLogPage(visitId);
+      void openActionLogPage(visitId, currentlySelectedWallet()?.primary_address);
     };
   }
 

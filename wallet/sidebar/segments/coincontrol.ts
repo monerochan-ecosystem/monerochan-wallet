@@ -27,11 +27,22 @@ export type StandardDraft = {
 };
 
 let coinControlMode = false;
-let sweepMode = false;
 let selectInputOpen = false;
-let sweepFee: bigint | null = null;
 let coinOutputSeq = 1;
-let coinOutputRows: CoinOutputRow[] = [];
+// the payment rows belong to the wallet route that made them
+type CoinControlState = {
+  rows: CoinOutputRow[];
+  sweep: boolean;
+  fee: bigint | null;
+};
+const ccByRoute = new Map<string, CoinControlState>();
+function cc(): CoinControlState {
+  const key = currentlySelectedWallet()?.primary_address ?? "";
+  let row = ccByRoute.get(key);
+  if (!row)
+    ccByRoute.set(key, (row = { rows: [], sweep: false, fee: null }));
+  return row;
+}
 const checkedInputIds = new Set<string>();
 let notedDraft: StandardDraft = {
   amount: "",
@@ -68,10 +79,10 @@ export function takeReleasedDraft(): StandardDraft | null {
 
 export function resetCoinControl() {
   checkedInputIds.clear();
-  sweepMode = false;
-  sweepFee = null;
+  cc().sweep = false;
+  cc().fee = null;
   selectInputOpen = false;
-  coinOutputRows = [];
+  cc().rows = [];
 }
 
 let onSpendDismiss: ((invocationId: string) => Promise<void>) | null = null;
@@ -95,17 +106,17 @@ function toggleCoinControlMode() {
     const open =
       window.wallets?.actionLogOpened?.getActiveByPermissions(["spend"])[0];
     if (open && onSpendDismiss) void onSpendDismiss(open.invocationId);
-    if (coinOutputRows.length === 0) {
+    if (cc().rows.length === 0) {
       const row = freshOutputRow();
       row.amount = notedDraft.amount;
       row.address = notedDraft.address;
       row.amountAtomic = notedDraft.amountAtomic;
       row.parsed = notedDraft.parsed;
-      coinOutputRows = [row];
+      cc().rows = [row];
     }
     return;
   }
-  const first = coinOutputRows[0];
+  const first = cc().rows[0];
   if (first) {
     releasedDraft = {
       amount: first.amount,
@@ -126,22 +137,23 @@ function sweepBaseSum() {
 }
 
 async function toggleSweep() {
-  sweepMode = !sweepMode;
-  if (!sweepMode) {
-    sweepFee = null;
+  const state = cc();
+  state.sweep = !state.sweep;
+  if (!state.sweep) {
+    state.fee = null;
     return;
   }
-  const kept = coinOutputRows[0] ?? freshOutputRow();
+  const kept = state.rows[0] ?? freshOutputRow();
   kept.amount = "";
   kept.amountAtomic = null;
-  coinOutputRows = [kept];
+  state.rows = [kept];
   const wallet = currentlySelectedWallet();
   if (!wallet) return;
   try {
     const estimate = await wallet.getFeeEstimate();
-    sweepFee = BigInt(estimate.fees?.[0] ?? 0) * 10000n;
+    if (state.sweep) state.fee = BigInt(estimate.fees?.[0] ?? 0) * 10000n;
   } catch {
-    sweepFee = null;
+    state.fee = null;
   }
 }
 
@@ -160,7 +172,7 @@ function selectedInputSum() {
 }
 
 function extraOutputSum() {
-  return coinOutputRows.reduce(
+  return cc().rows.reduce(
     (sum, row) => sum + (row.amountAtomic ?? 0n),
     0n,
   );
@@ -171,10 +183,10 @@ function rowAddressOk(row: CoinOutputRow) {
 }
 
 function coinOutputsValid() {
-  const first = coinOutputRows[0];
+  const first = cc().rows[0];
   if (!first) return false;
-  if (sweepMode) return coinOutputRows.length === 1 && rowAddressOk(first);
-  return coinOutputRows.every(
+  if (cc().sweep) return cc().rows.length === 1 && rowAddressOk(first);
+  return cc().rows.every(
     (row) => rowAddressOk(row) && (row.amountAtomic ?? 0n) > 0n,
   );
 }
@@ -182,7 +194,7 @@ function coinOutputsValid() {
 export function coinControlSendReady(sendLocked: boolean) {
   if (!connectedToNode() || !window.unlocked || sendLocked) return false;
   if (!coinOutputsValid()) return false;
-  if (sweepMode) {
+  if (cc().sweep) {
     const all = currentlySelectedWallet()?.spendableInputs() ?? [];
     if (checkedInputIds.size === 0) return all.length > 0;
     return selectedInputSum() > 0n;
@@ -212,10 +224,10 @@ export async function submitCoinControl(
   const wallet_to_send_from_pa = currentlySelectedWallet()?.primary_address;
   if (!wallet_to_send_from_pa) return;
   pruneCheckedInputs();
-  const sweep = sweepMode;
-  const address = (coinOutputRows[0]?.address ?? "").trim();
+  const sweep = cc().sweep;
+  const address = (cc().rows[0]?.address ?? "").trim();
   const input_indexes = [...checkedInputIds];
-  const payments = coinOutputRows.map((row) => ({
+  const payments = cc().rows.map((row) => ({
     address: row.address.trim(),
     amount: (row.amountAtomic ?? 0n).toString(),
   }));
@@ -376,7 +388,7 @@ function bindCoinControl() {
       else checkedInputIds.delete(id);
     };
   }
-  for (const row of coinOutputRows) {
+  for (const row of cc().rows) {
     const addressEl = document.getElementById(
       `cc-addr-${row.key}`,
     ) as HTMLInputElement | null;
@@ -403,13 +415,13 @@ function bindCoinControl() {
     const removeEl = document.getElementById(`cc-rm-${row.key}`);
     if (removeEl)
       removeEl.onclick = () => {
-        coinOutputRows = coinOutputRows.filter((item) => item.key !== row.key);
+        cc().rows = cc().rows.filter((item) => item.key !== row.key);
       };
   }
   const addEl = document.getElementById("cc-add-output");
   if (addEl)
     addEl.onclick = () => {
-      coinOutputRows = [...coinOutputRows, freshOutputRow()];
+      cc().rows = [...cc().rows, freshOutputRow()];
     };
   const modeEl = document.getElementById("openCoinControlButton");
   if (modeEl) modeEl.onclick = toggleCoinControlMode;
@@ -446,13 +458,14 @@ export function coinControlView(): MiniHtmlString {
   const outSum = extraOutputSum();
   const inSum = selectedInputSum();
   const short =
-    !sweepMode && checkedInputIds.size > 0 && inSum < outSum
+    !cc().sweep && checkedInputIds.size > 0 && inSum < outSum
       ? "exceeds selected inputs"
       : "";
-  const visibleRows = sweepMode ? coinOutputRows.slice(0, 1) : coinOutputRows;
+  const visibleRows = cc().sweep ? cc().rows.slice(0, 1) : cc().rows;
   const outputBlocks = visibleRows.map((row) => {
-    if (sweepMode) {
-      const feeText = sweepFee == null ? "..." : convertBigIntAmount(sweepFee);
+    if (cc().sweep) {
+      const fee = cc().fee;
+      const feeText = fee == null ? "..." : convertBigIntAmount(fee);
       return html`<div class="cc-extra">
         <input
           type="text"
@@ -511,7 +524,7 @@ export function coinControlView(): MiniHtmlString {
           ${convertBigIntAmount(inSum)}
         </div>
         <div style="color: #e74c3c;">${short}</div>
-        ${sweepMode && checkedInputIds.size === 0
+        ${cc().sweep && checkedInputIds.size === 0
           ? html`<div>no selection sweeps all spendable inputs</div>`
           : ""}
       </div>`
@@ -527,7 +540,7 @@ export function coinControlView(): MiniHtmlString {
   return html`<div>
     ${ccStyle()}
     ${rows}
-    ${sweepMode
+    ${cc().sweep
       ? ""
       : html`<span class="cc-btn" id="cc-add-output">add output</span>`}
     <span
@@ -537,7 +550,7 @@ export function coinControlView(): MiniHtmlString {
     >
     ${list}
     <div>
-      <span class="cc-btn ${sweepMode ? "cc-btn-on" : ""}" id="cc-sweep"
+      <span class="cc-btn ${cc().sweep ? "cc-btn-on" : ""}" id="cc-sweep"
         >external sweep</span
       >
     </div>

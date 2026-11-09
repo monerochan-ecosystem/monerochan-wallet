@@ -34,15 +34,27 @@ import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/unpacked";
 import { openActionLogPage, toggleActionLogPage } from "../../actionlog/open";
 import { formatTime, toolInfo, validityMessage } from "./toolInfo";
 
-let parsedAmount: bigint | null = null;
-let amountInputValue = "";
-let addressInputValue = "";
-let justSentTx = false;
+// the send plate is per wallet route. keep its state per route too.
+type SendDraft = {
+  amount: string;
+  address: string;
+  amountAtomic: bigint | null;
+  parsed: ParseAddressError | ParsedAddress | null;
+};
+const drafts = new Map<string, SendDraft>();
+const sentUntil = new Map<string, number>();
+const dismissedStatus = new Map<string, number>();
+const executedHint = new Map<string, string>();
 let ignoredSpendId: string | null = null;
 let lastSpendId: string | null = null;
-let dismissedStatusStamp: number | null = null;
-let executedSpendId: string | null = null;
-let executedHintDismissed = false;
+function routeKey(): string {
+  return currentlySelectedWallet()?.primary_address ?? "";
+}
+function draft(key = routeKey()): SendDraft {
+  let row = drafts.get(key);
+  if (!row) drafts.set(key, (row = { amount: "", address: "", amountAtomic: null, parsed: null }));
+  return row;
+}
 // opening coin control retires the tool call through this handler
 setSpendDismissHandler(async (invocationId) => {
   ignoredSpendId = invocationId;
@@ -53,23 +65,25 @@ export function parseAmountCallback() {
     "amountInput",
   ) as HTMLInputElement | null;
   if (!amountInput) return;
-  parsedAmount = convertAmountBigInt(amountInput.value);
-  amountInputValue = amountInput.value;
+  draft().amountAtomic = convertAmountBigInt(amountInput.value);
+  draft().amount = amountInput.value;
 }
 
 export function walletUnlocked(): boolean {
   if (window.unlocked === undefined) return false;
   return window.unlocked;
 }
-let parsedAddress: ParseAddressError | ParsedAddress | null = null;
 function spendOpen(): InvocationState | null {
   return (
     window.wallets?.actionLogOpened?.getActiveByPermissions(["spend"])[0] ?? null
   );
 }
 function sendButtonActive() {
-  if (coinControlIsOn()) return coinControlSendReady(justSentTx);
+  if (coinControlIsOn())
+    return coinControlSendReady((sentUntil.get(routeKey()) ?? 0) >= Date.now());
   const open = spendOpen();
+  const parsedAddress = draft().parsed;
+  const parsedAmount = draft().amountAtomic;
   const parsedAmountBiggerThanAvailable =
     (parsedAmount || 0n) > (currentlySelectedWallet()?.amount || 1n);
   return !!(
@@ -79,15 +93,12 @@ function sendButtonActive() {
     parsedAddress &&
     "address" in parsedAddress &&
     parsedAmount &&
-    !justSentTx &&
+    (sentUntil.get(routeKey()) ?? 0) < Date.now() &&
     open?.valid !== "invalid"
   );
 }
 function markJustSent() {
-  justSentTx = true;
-  setTimeout(() => {
-    justSentTx = false;
-  }, 2000);
+  sentUntil.set(routeKey(), Date.now() + 2000);
 }
 async function sendCallback() {
   // safe side of the top slider. fire is the only side that may send.
@@ -104,6 +115,8 @@ async function sendCallback() {
     );
     return;
   }
+  const parsedAddress = draft().parsed;
+  const parsedAmount = draft().amountAtomic;
   if (
     sendButtonActive() &&
     parsedAddress &&
@@ -114,20 +127,16 @@ async function sendCallback() {
     if (!wallet_to_send_from_pa)
       throw new Error("wallet_to_send_from_pa is undefined");
 
-    justSentTx = true;
-    setTimeout(() => {
-      justSentTx = false;
-    }, 2000);
+    sentUntil.set(wallet_to_send_from_pa, Date.now() + 2000);
 
     const open = spendOpen();
     const address = parsedAddress.address;
     const amount = parsedAmount;
     const amountDisplay = convertBigIntAmount(amount);
     // clear the plate before the wallet waits on the node.
-    clearSendForm(open?.invocationId ?? null);
+    clearSendForm(open?.invocationId ?? null, wallet_to_send_from_pa);
     if (open) {
-      executedSpendId = open.invocationId;
-      executedHintDismissed = false;
+      executedHint.set(wallet_to_send_from_pa, open.invocationId);
       await window.wallets?.actionLogOpened?.execute(open.invocationId, {
         address,
         amount: amountDisplay,
@@ -145,29 +154,35 @@ async function sendCallback() {
         input_indexes: [],
       });
     }
-    await resetSendInputs();
   }
 }
 async function resetCallback() {
-  await resetSendInputs();
-  justSentTx = false;
   const pa = currentlySelectedWallet()?.primary_address;
-  if (pa) await window.wallets?.dismissSendPlate({ primary_address: pa });
+  await resetSendInputs(pa);
+  if (pa) {
+    sentUntil.delete(pa);
+    const latest = latestLog(pa);
+    if (latest) dismissedStatus.set(pa, latest.timestamp);
+    await window.wallets?.dismissSendPlate({ primary_address: pa });
+  }
   readLastTxLog();
 }
 
-let last_tx_log: TxLog | null = null;
-function readLastTxLog() {
-  const logs = currentlySelectedWallet()?.tx_logs ?? [];
-  last_tx_log = null;
+function latestLog(pa: string): TxLog | null {
+  const wallet = window.wallets?.wallets?.find(
+    (row) => row.primary_address === pa,
+  );
+  const logs = wallet?.tx_logs ?? [];
   for (let i = logs.length - 1; i >= 0; i--) {
     const row = logs[i];
-    if (row && !row.hidden_on_send_plate) {
-      if (row.timestamp === dismissedStatusStamp) break;
-      last_tx_log = row;
-      break;
-    }
+    if (!row || row.hidden_on_send_plate) continue;
+    return row.timestamp === dismissedStatus.get(pa) ? null : row;
   }
+  return null;
+}
+let last_tx_log: TxLog | null = null;
+function readLastTxLog() {
+  last_tx_log = latestLog(currentlySelectedWallet()?.primary_address ?? "");
   setTXlogStatusMsg();
 }
 let lastTxLogMessage = "";
@@ -198,13 +213,14 @@ function setTXlogStatusMsg() {
     "failed to send transaction " + formatTime(last_tx_log.timestamp);
   lastTxLogMessageClass = "txlog-error";
 }
-function clearSendForm(invocationId?: string | null) {
+function clearSendForm(invocationId?: string | null, key = routeKey()) {
   if (invocationId) ignoredSpendId = invocationId;
   resetCoinControl();
-  amountInputValue = "";
-  parsedAmount = null;
-  addressInputValue = "";
-  parsedAddress = null;
+  const row = draft(key);
+  row.amount = "";
+  row.amountAtomic = null;
+  row.address = "";
+  row.parsed = null;
   const amountInput = document.getElementById(
     "amountInput",
   ) as HTMLInputElement | null;
@@ -220,28 +236,30 @@ function clearSendForm(invocationId?: string | null) {
     addressInput.disabled = false;
   }
 }
-async function resetSendInputs() {
+async function resetSendInputs(key = routeKey()) {
   const open = spendOpen();
   if (open) {
     ignoredSpendId = open.invocationId;
     await window.wallets?.actionLogOpened?.dismiss(open.invocationId);
   }
-  clearSendForm();
+  clearSendForm(undefined, key);
 }
 export async function parseAddressCallback() {
   const addressInput = document.getElementById(
     "addressInput",
   ) as HTMLInputElement | null;
   if (!addressInput) return;
-  parsedAddress = await parseAddress(addressInput.value.trim());
-  addressInputValue = addressInput.value;
+  draft().parsed = await parseAddress(addressInput.value.trim());
+  draft().address = addressInput.value;
 }
 function executedHintMarkup() {
-  if (!executedSpendId || executedHintDismissed) return "";
+  const wallet = currentlySelectedWallet()?.primary_address ?? "";
+  const executedSpendId = executedHint.get(wallet);
+  if (!executedSpendId) return "";
   const dismissExecuted = document.getElementById("dismissExecuted");
   if (dismissExecuted) {
     dismissExecuted.onclick = () => {
-      executedHintDismissed = true;
+      executedHint.delete(wallet);
     };
   }
   const visitExecuted = document.getElementById("visitExecuted");
@@ -258,18 +276,19 @@ function executedHintMarkup() {
   </div>`;
 }
 export function sendPlateContent() {
+  const row = draft();
   const released = takeReleasedDraft();
   if (released) {
-    amountInputValue = released.amount;
-    addressInputValue = released.address;
-    parsedAmount = released.amountAtomic;
-    parsedAddress = released.parsed;
+    row.amount = released.amount;
+    row.address = released.address;
+    row.amountAtomic = released.amountAtomic;
+    row.parsed = released.parsed;
   }
   noteStandardDraft({
-    amount: amountInputValue,
-    address: addressInputValue,
-    amountAtomic: parsedAmount,
-    parsed: parsedAddress,
+    amount: row.amount,
+    address: row.address,
+    amountAtomic: row.amountAtomic,
+    parsed: row.parsed,
   });
   const raw = spendOpen();
   if (raw && raw.invocationId !== ignoredSpendId) ignoredSpendId = null;
@@ -291,13 +310,13 @@ export function sendPlateContent() {
     const newSpend = !!open && open.invocationId !== lastSpendId;
     lastSpendId = open?.invocationId ?? null;
     amountInput.oninput = parseAmountCallback;
-    if (amountInput.value.length === 0 && amountInputValue.length > 0) {
-      amountInput.value = amountInputValue;
+    if (amountInput.value.length === 0 && row.amount.length > 0) {
+      amountInput.value = row.amount;
       parseAmountCallback();
     }
     if (toolAmount != null) {
-      amountInputValue = convertBigIntAmount(toolAmount);
-      amountInput.value = amountInputValue;
+      row.amount = convertBigIntAmount(toolAmount);
+      amountInput.value = row.amount;
       parseAmountCallback();
       amountInput.disabled = true;
     } else if (open && (amountInput.disabled || newSpend)) {
@@ -312,18 +331,18 @@ export function sendPlateContent() {
 
   if (addressInput) {
     addressInput.oninput = parseAddressCallback;
-    if (addressInput.value.length === 0 && addressInputValue.length > 0) {
-      addressInput.value = addressInputValue;
+    if (addressInput.value.length === 0 && row.address.length > 0) {
+      addressInput.value = row.address;
     }
     if (open?.address) {
-      addressInputValue = open.address;
-      addressInput.value = addressInputValue;
+      row.address = open.address;
+      addressInput.value = row.address;
       parseAddressCallback();
       addressInput.disabled = true;
     }
   }
   const parsedAmountBiggerThanAvailable =
-    (parsedAmount || 0n) > (currentlySelectedWallet()?.amount || 1n)
+    (row.amountAtomic || 0n) > (currentlySelectedWallet()?.amount || 1n)
       ? "exceeds unlocked funds"
       : "";
   const sendBtn = document.getElementById("send-action") as HTMLButtonElement;
@@ -357,7 +376,7 @@ export function sendPlateContent() {
           class="send-input-element"
           placeholder="Enter amount"
         />
-        ${selectedAmountLine(parsedAmount, parsedAmountBiggerThanAvailable)}
+        ${selectedAmountLine(row.amountAtomic, parsedAmountBiggerThanAvailable)}
       </div>`;
   const standardAddress = coinControlIsOn()
     ? ""
@@ -369,8 +388,8 @@ export function sendPlateContent() {
           placeholder="Enter address"
         />
         ${addressPreviewLine(
-          addressInputValue,
-          parsedAddress,
+          row.address,
+          row.parsed,
           toolInfoSnippet !== "",
         )}
       </div>`;
@@ -495,7 +514,7 @@ export function sendPlate() {
   if (dismissStatus && last_tx_log) {
     const stamp = last_tx_log.timestamp;
     dismissStatus.onclick = () => {
-      dismissedStatusStamp = stamp;
+      dismissedStatus.set(currentlySelectedWallet()?.primary_address ?? "", stamp);
       const pa = currentlySelectedWallet()?.primary_address;
       if (pa) void window.wallets?.dismissSendPlate({ primary_address: pa });
     };

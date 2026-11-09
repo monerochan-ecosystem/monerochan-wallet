@@ -8,6 +8,14 @@ import {
 } from "@spirobel/monero-wallet-api/unpacked";
 import type { Pending, PrePendingTx } from "@spirobel/monero-wallet-api/unpacked";
 import { openActionLogPage } from "../../actionlog/open";
+import {
+  confirmationChainHeight,
+  formatConfirmationEta,
+  minedSpendHeight,
+  pendingTransactionEta,
+  txLogConfirmationEta,
+  type ConfirmationEta,
+} from "./toolInfo";
 const openDetails: Record<string, boolean | undefined> = {};
 function setOpenDetails(tx_hash: string) {
   const details = document.getElementById(
@@ -55,6 +63,15 @@ function coinLines(
     </div>
   </div>`;
 }
+function confirmationEtaLine(eta: ConfirmationEta | null) {
+  return eta
+    ? html`<div class="tx-detail">
+        <div>ETA:</div>
+        <div style="color: white;">${formatConfirmationEta(eta)}</div>
+      </div>`
+    : "";
+}
+
 function txDetails(tx: FoundTransaction) {
   const sub_index = tx.outputs[0]?.subaddress_index;
   const sub_snippet = sub_index
@@ -86,6 +103,9 @@ function txDetails(tx: FoundTransaction) {
     : "";
 
   const coin_snippet = coinLines(tx.txlog, tx.inputs);
+  const eta_snippet = confirmationEtaLine(
+    pendingTransactionEta(tx, confirmationChainHeight(window.connectionStatus)),
+  );
 
   return html`<div>
     <style>
@@ -121,7 +141,7 @@ function txDetails(tx: FoundTransaction) {
       <div style="color: white;">${convertBigIntAmount(tx.amount)}</div>
     </div>
     ${sub_snippet} ${miner_snippet} ${pending_snippet} ${confirmed_snippet}
-    ${coin_snippet}
+    ${eta_snippet} ${coin_snippet}
     ${invocationLink(tx.txlog?.invocationId, `log-${tx.tx_hash}`)}
   </div>`;
 }
@@ -129,7 +149,7 @@ function txDetails(tx: FoundTransaction) {
 function invocationLink(invocationId: string | undefined, domId: string) {
   if (!invocationId) return html`<div></div>`;
   const el = document.getElementById(domId);
-  if (el) el.onclick = () => openActionLogPage(invocationId);
+  if (el) el.onclick = () => openActionLogPage(invocationId, currentlySelectedWallet()?.primary_address);
   return html`<div class="tx-detail">
     <div>log:</div>
     <div id="${domId}" style="cursor: pointer; text-decoration: underline;">
@@ -140,6 +160,13 @@ function invocationLink(invocationId: string | undefined, domId: string) {
 
 function preTxDetails(tx: PrePendingTx) {
   const coin_snippet = coinLines(tx.txlog, tx.inputs);
+  const eta_snippet = confirmationEtaLine(
+    txLogConfirmationEta(
+      tx.txlog,
+      confirmationChainHeight(window.connectionStatus),
+      minedSpendHeight(tx.inputs),
+    ),
+  );
 
   return html`<div>
     <style>
@@ -163,7 +190,7 @@ function preTxDetails(tx: PrePendingTx) {
       <div class="tx-hash">${tx.self_spent ? "yes" : "no"}</div>
     </div>
 
-    ${coin_snippet}
+    ${eta_snippet} ${coin_snippet}
     ${invocationLink(
       tx.txlog?.invocationId,
       `log-pre-${tx.inputs[0]?.index_on_blockchain ?? "x"}`,

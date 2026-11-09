@@ -1,31 +1,39 @@
-export function actionLogPageUrl(invocationId?: string): string {
-  const base = browser.runtime.getURL("actionlog.html");
-  if (invocationId) return `${base}#/invo/${invocationId}`;
-  return `${base}#/`;
+export function actionLogPageUrl(invocationId?: string, wallet?: string): string {
+  const url = new URL(browser.runtime.getURL("actionlog.html"));
+  if (wallet) url.searchParams.set("wallet", wallet);
+  url.hash = invocationId ? `/invo/${invocationId}` : "/";
+  return url.href;
 }
 
 async function actionLogTabs() {
   const base = browser.runtime.getURL("actionlog.html");
-  return browser.tabs.query({ url: `${base}*` });
+  return browser.tabs.query({ url: `${base}*` }) as Promise<
+    { id?: number; url?: string }[]
+  >;
 }
 
-export async function toggleActionLogPage() {
+export async function toggleActionLogPage(wallet?: string) {
   const open = await actionLogTabs();
   const ids = open.map((t) => t.id).filter((id): id is number => id != null);
   if (ids.length) {
     await browser.tabs.remove(ids);
     return;
   }
-  window.open(actionLogPageUrl());
+  window.open(actionLogPageUrl(undefined, wallet));
 }
 
-export async function openActionLogPage(invocationId?: string) {
-  const url = actionLogPageUrl(invocationId);
+export async function openActionLogPage(invocationId?: string, wallet?: string) {
   const open = await actionLogTabs();
-  const id = open[0]?.id;
-  if (id != null) {
-    await browser.tabs.update(id, { url, active: true });
+  const tab = open[0];
+  if (tab?.id != null) {
+    // Change only the route. Keep the open page and its in-memory filter.
+    const url = new URL(tab.url ?? actionLogPageUrl(undefined, wallet));
+    url.hash = invocationId ? `/invo/${invocationId}` : "/";
+    await browser.tabs.update(tab.id, {
+      ...(url.href !== tab.url ? { url: url.href } : {}),
+      active: true,
+    });
     return;
   }
-  window.open(url);
+  window.open(actionLogPageUrl(invocationId, wallet));
 }
