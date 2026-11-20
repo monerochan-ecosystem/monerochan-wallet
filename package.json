@@ -26,6 +26,7 @@
     "clean": "rm -rf ./dist"
   },
   "devDependencies": {
+    "@spirobel/mininext": "0.9.1",
     "@spirobel/monero-wallet-api": "0.6.17",
     "@spirobel/seedphrase": "0.3.2",
     "@types/bun": "1.3.14",
