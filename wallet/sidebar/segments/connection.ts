@@ -1,5 +1,5 @@
 import { openScanSettingsFile } from "@spirobel/monero-wallet-api/unpacked";
-import { html, type MiniHtmlString } from "../../../mininext/mininext";
+import { html, type MiniHtmlString } from "@spirobel/mininext";
 import { leftLower, tactileContentPlate } from "../ui/content";
 import { integerInput, textInput } from "../ui/input";
 
@@ -18,18 +18,6 @@ function startheightToString(startHeight: number | null) {
   if (startHeight === null) return "";
   return String(startHeight);
 }
-function showConnectionFields() {
-  const nodeUrlInput = document.getElementById(
-    "nodeUrl",
-  ) as HTMLInputElement | null;
-  if (nodeUrlInput) nodeUrlInput.value = nodeUrlInputValue || "";
-  const startHeightInput = document.getElementById(
-    "startHeight",
-  ) as HTMLInputElement | null;
-  if (startHeightInput && startHeightInputValue !== false) {
-    startHeightInput.value = startheightToString(startHeightInputValue);
-  }
-}
 async function loadConnectionFields() {
   const settings = await openScanSettingsFile();
   if (nodeUrlInputValue !== null) return;
@@ -37,7 +25,6 @@ async function loadConnectionFields() {
   if (startHeightInputValue === false) {
     startHeightInputValue = settings?.start_height ?? null;
   }
-  showConnectionFields();
 }
 const empty_status_message = html`<div></div>`;
 function positiveStatusMessage(message: string) {
@@ -54,28 +41,16 @@ let startHeightInputValue: number | null | false = false; // null is a valid val
 let test_result = "";
 let status_message: MiniHtmlString = empty_status_message;
 let openDevSettings = false;
-function updateNodeUrlCallback() {
-  const nodeUrl = document.getElementById("nodeUrl") as HTMLInputElement | null;
-  if (!nodeUrl) return;
-  nodeUrlInputValue = nodeUrl.value;
+function updateNodeUrlCallback(event: Event) {
+  nodeUrlInputValue = (event.target as HTMLInputElement).value;
   test_result = "";
   status_message = empty_status_message;
 }
-function updateStartHeightCallback() {
-  const startHeight = document.getElementById(
-    "startHeight",
-  ) as HTMLInputElement | null;
-  if (!startHeight) return;
-
-  const parsed = parseInt(startHeight.value);
-  if (isNaN(parsed)) {
-  } else {
-    startHeightInputValue = parsed;
-    startHeight.value = String(parsed);
-  }
-  if (startHeight.value.length === 0) {
-    startHeightInputValue = null;
-  }
+function updateStartHeightCallback(event: Event) {
+  const value = (event.target as HTMLInputElement).value;
+  const parsed = parseInt(value);
+  if (!isNaN(parsed)) startHeightInputValue = parsed;
+  if (value.length === 0) startHeightInputValue = null;
 }
 function openDevSettingsHandler() {
   openDevSettings = !openDevSettings;
@@ -84,34 +59,22 @@ async function resetNodeUrlHandler() {
   const settings = await openScanSettingsFile();
   nodeUrlInputValue = settings?.node_url || null;
   startHeightInputValue = settings?.start_height ?? null;
-  showConnectionFields();
   status_message = neutralStatusMessage("Node URL, start height reset");
   test_result = "";
 }
 async function saveNodeUrlHandler() {
-  const nodeUrlInput = document.getElementById(
-    "nodeUrl",
-  ) as HTMLInputElement | null;
-  if (!nodeUrlInput || !window.wallets) return;
-  let nodeUrl = nodeUrlInput.value.trim();
+  if (!window.wallets) return;
+  let nodeUrl = (nodeUrlInputValue ?? "").trim();
   if (nodeUrl.endsWith("/")) nodeUrl = nodeUrl.slice(0, -1);
   if (!nodeUrl) return;
-  const startHeightInput = document.getElementById(
-    "startHeight",
-  ) as HTMLInputElement | null;
-  let startHeight: number | null = null;
-  if (startHeightInput && startHeightInput.value.length > 0) {
-    const parsed = parseInt(startHeightInput.value, 10);
-    if (isNaN(parsed) || parsed < 0) return;
-    startHeight = parsed;
-  }
+  const startHeight = startHeightInputValue === false ? null : startHeightInputValue;
+  if (startHeight !== null && startHeight < 0) return;
   nodeUrl = await nodeUrlToSave(nodeUrl);
   if (!canStoreNodeUrl(nodeUrl)) {
     status_message = negativeStatusMessage("Node URL is not valid");
     test_result = "";
     return;
   }
-  nodeUrlInput.value = nodeUrl;
   nodeUrlInputValue = nodeUrl;
   startHeightInputValue = startHeight;
   test_result = "";
@@ -124,11 +87,7 @@ async function saveNodeUrlHandler() {
 }
 
 async function sendTestRequestHandler() {
-  const nodeUrlInput = document.getElementById(
-    "nodeUrl",
-  ) as HTMLInputElement | null;
-  if (!nodeUrlInput) return;
-  let nodeUrl = nodeUrlInput.value.trim();
+  let nodeUrl = (nodeUrlInputValue ?? "").trim();
   if (nodeUrl.endsWith("/")) nodeUrl = nodeUrl.slice(0, -1);
   if (!nodeUrl) return;
   const found = await findNodeInfo(nodeUrl);
@@ -138,74 +97,20 @@ async function sendTestRequestHandler() {
     return;
   }
   nodeUrlInputValue = found.url;
-  nodeUrlInput.value = found.url;
   status_message = positiveStatusMessage(`get_info response success`);
   test_result = JSON.stringify(found.info, null, 2);
   const new_height = found.info.height - 1;
   if (!startHeightInputValue) {
     startHeightInputValue = new_height;
-    const startHeightInput = document.getElementById(
-      "startHeight",
-    ) as HTMLInputElement | null;
-    if (startHeightInput) {
-      startHeightInput.value = startheightToString(new_height);
-    }
   }
 }
 export function connectionPlate() {
-  const openDevSettingsButton = document.getElementById(
-    "openDevSettingsButton",
-  ) as HTMLInputElement | null;
-  if (openDevSettingsButton) {
-    openDevSettingsButton.onclick = openDevSettingsHandler;
+  if (!connectionFieldsLoaded) {
+    connectionFieldsLoaded = true;
+    void loadConnectionFields();
   }
-  const sendTestRequest = document.getElementById(
-    "sendTestRequest",
-  ) as HTMLInputElement | null;
-  if (sendTestRequest) {
-    sendTestRequest.onclick = sendTestRequestHandler;
-  }
-  const resetNodeUrl = document.getElementById(
-    "resetNodeUrl",
-  ) as HTMLInputElement | null;
-  if (resetNodeUrl) {
-    resetNodeUrl.onclick = resetNodeUrlHandler;
-  }
-  const saveNodeUrl = document.getElementById(
-    "saveNodeUrl",
-  ) as HTMLInputElement | null;
-  if (saveNodeUrl) {
-    saveNodeUrl.onclick = saveNodeUrlHandler;
-  }
-  const nodeUrlInput = document.getElementById(
-    "nodeUrl",
-  ) as HTMLInputElement | null;
-  if (nodeUrlInput) {
-    nodeUrlInput.oninput = updateNodeUrlCallback;
-    if (
-      nodeUrlInput.value.length === 0 &&
-      nodeUrlInputValue &&
-      nodeUrlInputValue.length > 0
-    ) {
-      nodeUrlInput.value = nodeUrlInputValue;
-    }
-    if (!connectionFieldsLoaded) {
-      connectionFieldsLoaded = true;
-     loadConnectionFields();
-    }
-  }
-  const startHeightInput = document.getElementById(
-    "startHeight",
-  ) as HTMLInputElement | null;
-  if (startHeightInput) {
-    startHeightInput.oninput = updateStartHeightCallback;
-    if (
-      startHeightInput.value.length === 0 &&
-      startHeightInputValue !== false
-    ) {
-      startHeightInput.value = startheightToString(startHeightInputValue);
-    }
-  }
+  const startHeightText =
+    startHeightInputValue === false ? "" : startheightToString(startHeightInputValue);
   return tactileContentPlate(
     html`<div>
       <style>
@@ -295,17 +200,27 @@ export function connectionPlate() {
           color: #ff0000;
         }
       </style>
-      ${integerInput("startHeight", "Enter scan start height")}
+      ${integerInput(
+        "startHeight",
+        "Enter scan start height",
+        startHeightText,
+        updateStartHeightCallback,
+      )}
       <span>start height (set to chain tip if left empty) </span>
-      ${textInput("nodeUrl", "Enter node URL")}
+      ${textInput(
+        "nodeUrl",
+        "Enter node URL",
+        nodeUrlInputValue ?? "",
+        updateNodeUrlCallback,
+      )}
       <span>node url</span>
       <div class="send-test">
-        <span class="no-side-effect-action" id="sendTestRequest">
+        <span class="no-side-effect-action" id="sendTestRequest" onclick=${sendTestRequestHandler}>
           TEST CONNECTION</span
         >
-        <span class="no-side-effect-action" id="resetNodeUrl"> RESET</span>
+        <span class="no-side-effect-action" id="resetNodeUrl" onclick=${resetNodeUrlHandler}> RESET</span>
         <span></span>
-        <span class="side-effect-action" id="saveNodeUrl"> SAVE</span>
+        <span class="side-effect-action" id="saveNodeUrl" onclick=${saveNodeUrlHandler}> SAVE</span>
       </div>
       <div style="margin-left: 14px;">
         <div style="height: 14px;">
@@ -315,7 +230,7 @@ export function connectionPlate() {
       </div>
       <div style="margin-top: 15px; user-select: none;">
         ${detailedConnectionProgress()}
-        <span id="openDevSettingsButton">developer settings </span>
+        <span id="openDevSettingsButton" onclick=${openDevSettingsHandler}>developer settings </span>
       </div>
       <div id="devSettings">${openDevSettings ? developerSettings() : ""}</div>
     </div>`,

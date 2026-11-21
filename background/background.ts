@@ -3,7 +3,6 @@ import {
   configureUnpacked,
   type ManyScanCachesOpened,
 } from "@spirobel/monero-wallet-api/unpacked";
-import type { ExtensionBrowser } from "@spirobel/monero-wallet-api/tools";
 
 configureUnpacked({
   workerUrl: "worker_unpacked.js",

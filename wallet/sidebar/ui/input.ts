@@ -1,6 +1,12 @@
-import { html } from "../../../mininext/mininext";
+import { html } from "@spirobel/mininext";
 
-export function textInput(id: string, placeholder: string) {
+export type InputHandler = (event: Event) => unknown;
+export function textInput(
+  id: string,
+  placeholder: string,
+  value?: string,
+  oninput?: InputHandler,
+) {
   return html`<div class="text-input-block">
     <style>
       .text-input-block {
@@ -31,11 +37,18 @@ export function textInput(id: string, placeholder: string) {
       name="${id}"
       class="text-input-element"
       placeholder="${placeholder}"
+      value="${value}"
+      oninput=${oninput}
     />
   </div>`;
 }
 
-export function integerInput(id: string, placeholder: string) {
+export function integerInput(
+  id: string,
+  placeholder: string,
+  value?: string,
+  oninput?: InputHandler,
+) {
   return html`<div class="text-input-block">
     <style>
       .text-input-block {
@@ -80,6 +93,8 @@ export function integerInput(id: string, placeholder: string) {
       name="${id}"
       class="text-input-element"
       placeholder="${placeholder}"
+      value="${value}"
+      oninput=${oninput}
     />
   </div>`;
 }

@@ -2,7 +2,7 @@ import {
   convertBigIntAmount,
   readConnectionStatusDefaultLocation,
 } from "@spirobel/monero-wallet-api/unpacked";
-import { html } from "../../../mininext/mininext";
+import { html } from "@spirobel/mininext";
 import { currentlySelectedWallet, firstWallet } from "./walletRoute";
 export const safetyButtonIds = {
   fire: "fire",
@@ -10,32 +10,8 @@ export const safetyButtonIds = {
 } as const;
 export type SafetyButtonIds =
   (typeof safetyButtonIds)[keyof typeof safetyButtonIds];
-export function safetyClickHandler(e: MouseEvent) {
-  const target = e.currentTarget as HTMLElement | null;
-  const id = (e.currentTarget as HTMLElement | null)?.id as SafetyButtonIds;
-  if (!id || !target) return;
-  const knob = document.getElementById("knob");
-  const fireLabel = document.getElementById("fire-label");
-  const safeLabel = document.getElementById("safe-label");
-  const fireButton = document.getElementById("fire");
-  const safeButton = document.getElementById("safe");
-  if (knob && fireLabel && safeLabel && fireButton && safeButton) {
-    if (id === "fire") {
-      knob.classList.add("knob-fire");
-      fireLabel.classList.remove("deselected-label");
-      safeLabel.classList.add("deselected-label");
-      window.unlocked = true;
-      fireButton.style.cursor = "default";
-      safeButton.style.cursor = "pointer";
-    } else {
-      fireLabel.classList.add("deselected-label");
-      safeLabel.classList.remove("deselected-label");
-      knob.classList.remove("knob-fire");
-      window.unlocked = false;
-      fireButton.style.cursor = "pointer";
-      safeButton.style.cursor = "default";
-    }
-  }
+export function safetyClickHandler(id: SafetyButtonIds) {
+  window.unlocked = id === safetyButtonIds.fire;
 }
 export function truncateDecimalString(str: string, decimals = 3): string {
   if (!str.includes(".")) return str;
@@ -72,15 +48,8 @@ export const walletUpper = () => {
   const amountTrun = truncateDecimalString(amount, 3);
   const pendingAmount = convertBigIntAmount(wallet?.pending_amount || 0n);
   const pendingAmountTrun = truncateDecimalString(pendingAmount, 3);
-  const pendingEl = document.getElementById("pending-amount");
-  if (pendingEl && wallet?.pending_amount && wallet.pending_amount > 0n)
-    pendingEl.style.display = "block";
-  if (
-    pendingEl &&
-    ((wallet?.pending_amount && wallet.pending_amount <= 0n) ||
-      !wallet?.pending_amount)
-  )
-    pendingEl.style.display = "none";
+  const showPending = !!wallet?.pending_amount && wallet.pending_amount > 0n;
+  const unlocked = !!window.unlocked;
 
   const domain = window.walletRouteParams?.domain ?? "no_domain";
   const wallet_index = Number(window.walletRouteParams?.wallet_slot) ?? 0;
@@ -90,17 +59,17 @@ export const walletUpper = () => {
 
   return html` <div class="upper">
     <div class="labels">
-      <div class="safe-label" id="safe-label">0</div>
-      <div class="fire-label deselected-label" id="fire-label">
+      <div class="safe-label ${unlocked ? "deselected-label" : ""}" id="safe-label">0</div>
+      <div class="fire-label ${unlocked ? "" : "deselected-label"}" id="fire-label">
         ${amountTrun} XMR
-        <div class="pending-amount" id="pending-amount" style="display: none;">
+        <div class="pending-amount" id="pending-amount" style="display: ${showPending ? "block" : "none"};">
           ${pendingAmountTrun} (pending)
         </div>
       </div>
     </div>
 
     <div class="track" id="track">
-      <div class="knob" id="knob">
+      <div class="knob ${unlocked ? "knob-fire" : ""}" id="knob">
         <div class="knob-outer">
           <div class="knob-inner"></div>
         </div>
@@ -112,8 +81,16 @@ export const walletUpper = () => {
     <div class="wallet-domain">${display_domain} ${wallet_index_string}</div>
 
     <div class="wallet-name">${identity}</div>
-    <div id="safe"></div>
-    <div id="fire"></div>
+    <div
+      id="safe"
+      style="cursor: ${unlocked ? "pointer" : "default"}"
+      onclick=${() => safetyClickHandler(safetyButtonIds.safe)}
+    ></div>
+    <div
+      id="fire"
+      style="cursor: ${unlocked ? "default" : "pointer"}"
+      onclick=${() => safetyClickHandler(safetyButtonIds.fire)}
+    ></div>
     <style>
       .pending-amount {
         font-size: 10px;
@@ -130,7 +107,6 @@ export const walletUpper = () => {
         margin-left: 100px;
         width: 170px;
         height: 80px;
-        cursor: pointer;
       }
       .upper {
         height: 199px;

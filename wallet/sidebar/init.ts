@@ -14,7 +14,6 @@ configureUnpacked({
 });
 import { router } from "./router";
 import { lowerButtonIds } from "./segments/walletLower";
-import { removeActive } from "./ui/buttons";
 import {
   allWallets,
   setConnectionStatus,
@@ -145,7 +144,6 @@ function newestOpen(): InvocationState | null {
 
 // a new tool call must show send or wallets plate so accept/dismiss btn + tool call info is on screen.
 function syncUiToOpen(open: InvocationState) {
-  removeActive(lowerButtonIds);
   for (const perm of Object.keys(plateByPermission) as Array<
     keyof typeof plateByPermission
   >) {
@@ -156,7 +154,4 @@ function syncUiToOpen(open: InvocationState) {
     window.activeWalletPlate = plateByPermission[perm];
     break;
   }
-  if (!window.activeWalletPlate) return;
-  const button = document.getElementById(window.activeWalletPlate);
-  if (button) button.classList.add("active-switch");
 }

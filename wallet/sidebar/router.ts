@@ -1,4 +1,4 @@
-import { createRouter, type Mini, type Params } from "../../mininext/mininext";
+import { createRouter, type Mini, type Params } from "@spirobel/mininext";
 import { onboarding } from "./segments/onboarding";
 import { walletRoute } from "./segments/walletRoute";
 export type WalletRouteParams =

@@ -1,4 +1,4 @@
-import { flatten, html } from "../../../mininext/mininext";
+import { html } from "@spirobel/mininext";
 import {
   generateSeedphrase,
   getWalletSecret,
@@ -56,10 +56,7 @@ function onboardingUpper() {
   const seedwords = seedphrase.map((word, i) => {
     return html`<div class="seed-phrase" id="word${i + 1}">${word}</div>`;
   });
-  const flattenedSeedwords = flatten(seedwords, (htmlstrings) => {
-    const words = seedwords.length ? htmlstrings : "";
-    return html`<div class="seedphrase-container">${words}</div>`;
-  });
+  const seedwordList = html`<div class="seedphrase-container">${seedwords}</div>`;
   return html`<div class="upper">
     <style>
       .upper {
@@ -137,7 +134,7 @@ function onboardingUpper() {
       }
     </style>
 
-    ${flattenedSeedwords}
+    ${seedwordList}
 
     <div class="divider"></div>
     ${displayPassphrase()}
@@ -153,58 +150,28 @@ function generateSeedphraseCB() {
 let recoverPlateOpened = false;
 function closeRecoveryPlate() {
   recoverPlateOpened = false;
-  const recoverPlate = document.getElementById(
-    "recover-plate",
-  ) as HTMLElement | null;
-  if (recoverPlate) {
-    recoverPlate.style.display = "none";
-  }
-  const recoverEl = document.getElementById("recover") as HTMLElement | null;
-  if (!recoverEl) return;
-  recoverEl.classList.remove("active-switch");
-}
-function openRecoveryPlate() {
-  const recoverEl = document.getElementById("recover") as HTMLElement | null;
-
-  recoverPlateOpened = true;
-  const recoverPlate = document.getElementById(
-    "recover-plate",
-  ) as HTMLElement | null;
-  if (recoverPlate) {
-    recoverPlate.style.display = "block";
-  }
-  if (recoverEl) {
-    recoverEl.classList.add("active-switch");
-  }
 }
 function recoverWalletCB() {
-  if (!recoverPlateOpened) {
-    openRecoveryPlate();
-  } else {
-    closeRecoveryPlate();
-  }
+  recoverPlateOpened = !recoverPlateOpened;
 }
 let recoveryMessage = html`<div class="recovery-message"></div>`;
-function updateRecoverySeedphraseCB() {
-  const recoverySeedphraseInput = document.getElementById(
-    "recoverySeedphrase",
-  ) as HTMLInputElement | null;
-  if (recoverySeedphraseInput) {
-    const isValid = validateSeedphrase(recoverySeedphraseInput.value.trim());
-    if (isValid) {
-      recoveryMessage = html`<div class="recovery-message">
-        <span>seedphrase is valid</span>
-      </div>`;
-      seedphrase = recoverySeedphraseInput.value.trim().split(" ");
-    } else if (recoverySeedphraseInput.value.length === 0) {
-      seedphrase = [];
-      recoveryMessage = html`<div class="recovery-message"></div>`;
-    } else {
-      seedphrase = [];
-      recoveryMessage = html`<div class="recovery-message-error">
-        <span>recovery seedphrase is not valid</span>
-      </div>`;
-    }
+let recoverySeedphraseValue = "";
+function updateRecoverySeedphraseCB(event: Event) {
+  recoverySeedphraseValue = (event.target as HTMLInputElement).value;
+  const typed = recoverySeedphraseValue.trim();
+  if (validateSeedphrase(typed)) {
+    recoveryMessage = html`<div class="recovery-message">
+      <span>seedphrase is valid</span>
+    </div>`;
+    seedphrase = typed.split(" ");
+  } else if (recoverySeedphraseValue.length === 0) {
+    seedphrase = [];
+    recoveryMessage = html`<div class="recovery-message"></div>`;
+  } else {
+    seedphrase = [];
+    recoveryMessage = html`<div class="recovery-message-error">
+      <span>recovery seedphrase is not valid</span>
+    </div>`;
   }
 }
 
@@ -212,7 +179,7 @@ async function importWalletFileCB() {
   const input = document.createElement("input");
   input.type = "file";
   input.accept = ".json";
-  input.onchange = async (e) => {
+  input.addEventListener("change", async (e) => {
     const file = (e.target as HTMLInputElement).files?.[0];
     if (!file) return;
     const text = await file.text();
@@ -228,23 +195,11 @@ async function importWalletFileCB() {
     await window.wallets!.buildWallets();
     navigateToFirstWallet();
     location.reload();
-  };
+  });
   input.click();
 }
 
 function recoveryPlate() {
-  const recoverySeedphraseInput = document.getElementById(
-    "recoverySeedphrase",
-  ) as HTMLInputElement | null;
-  if (recoverySeedphraseInput) {
-    recoverySeedphraseInput.oninput = updateRecoverySeedphraseCB;
-  }
-  const importWalletEl = document.getElementById(
-    "importWallet",
-  ) as HTMLElement | null;
-  if (importWalletEl) {
-    importWalletEl.onclick = importWalletFileCB;
-  }
   return html` <div style="height:233px">
     ${recoverPlateOpened
       ? tactileContentPlate(
@@ -267,7 +222,12 @@ function recoveryPlate() {
               </style>
               <div style="margin-top: 12px;">recover by seedphrase</div>
 
-              ${textInput("recoverySeedphrase", "Enter Seedphrase to recover")}
+              ${textInput(
+                "recoverySeedphrase",
+                "Enter Seedphrase to recover",
+                recoverySeedphraseValue,
+                updateRecoverySeedphraseCB,
+              )}
               ${recoveryMessage}
             </div>
             <div style="margin-bottom: 19px;">
@@ -275,7 +235,7 @@ function recoveryPlate() {
             </div>
 
             <div style="">
-              <span id="importWallet">IMPORT WALLETFILE</span>
+              <span id="importWallet" onclick=${importWalletFileCB}>IMPORT WALLETFILE</span>
             </div>
           </div>`,
           rightUpper,
@@ -288,18 +248,18 @@ function recoveryPlate() {
   </div>`;
 }
 function onboardingTopMenu() {
-  const generateButton = actionButton("generate", "GENERATE SEEDPHRASE");
-  const recoverWallet = tactileSwitch("recover", "RECOVER");
-  const generateEl = document.getElementById("generate") as HTMLElement | null;
-  if (generateEl) {
-    generateEl.onclick = generateSeedphraseCB;
-  }
-  const recoverWalletEl = document.getElementById(
+  const generateButton = actionButton(
+    "generate",
+    "GENERATE SEEDPHRASE",
+    true,
+    generateSeedphraseCB,
+  );
+  const recoverWallet = tactileSwitch(
     "recover",
-  ) as HTMLElement | null;
-  if (recoverWalletEl) {
-    recoverWalletEl.onclick = recoverWalletCB;
-  }
+    "RECOVER",
+    recoverWalletCB,
+    recoverPlateOpened,
+  );
   return html`<div class="top-menu">
     ${generateButton} ${recoverWallet}
 
@@ -316,24 +276,19 @@ function onboardingTopMenu() {
 }
 let seedOffsetInputValue: string = "";
 
-function updateSeedoffsetPassphraseCB() {
-  const offsetPassphrase = document.getElementById(
-    "seedoffsetPassphrase",
-  ) as HTMLInputElement | null;
-  if (!offsetPassphrase) return;
-  seedOffsetInputValue = offsetPassphrase.value;
+function updateSeedoffsetPassphraseCB(event: Event) {
+  seedOffsetInputValue = (event.target as HTMLInputElement).value;
 }
 function seedoffsetPassphraseInput() {
-  const seedOffsetInput = document.getElementById(
-    "seedoffsetPassphrase",
-  ) as HTMLInputElement | null;
-  if (seedOffsetInput) {
-    seedOffsetInput.oninput = updateSeedoffsetPassphraseCB;
-  }
   return tactileContentPlate(
     html`<div style="padding: 8px">
       <span> seedoffset passphrase</span>
-      ${textInput("seedoffsetPassphrase", "Enter Seedoffset Passphrase")}
+      ${textInput(
+        "seedoffsetPassphrase",
+        "Enter Seedoffset Passphrase",
+        seedOffsetInputValue,
+        updateSeedoffsetPassphraseCB,
+      )}
     </div>`,
     middleUpper,
     "top",
@@ -343,38 +298,20 @@ function seedoffsetPassphraseInput() {
 function resetCB() {
   seedphrase = [];
   seedOffsetInputValue = "";
-  const seedOffsetInput = document.getElementById(
-    "seedoffsetPassphrase",
-  ) as HTMLInputElement | null;
-  if (seedOffsetInput) {
-    seedOffsetInput.value = "";
-  }
+  recoverySeedphraseValue = "";
   recoveryMessage = html`<div class="recovery-message"></div>`;
-  const recoverySeedphraseInput = document.getElementById(
-    "recoverySeedphrase",
-  ) as HTMLInputElement | null;
-  if (recoverySeedphraseInput) recoverySeedphraseInput.value = "";
 }
 function finishPossible() {
   return seedphrase.length > 0;
 }
 function onboardingBottomMenu() {
-  const resetEL = document.getElementById("reset") as HTMLElement | null;
-  if (resetEL) {
-    resetEL.onclick = resetCB;
-  }
-  const finishEL = document.getElementById(
-    "finish-setup",
-  ) as HTMLElement | null;
-  if (finishEL) {
-    finishEL.onclick = finishCB;
-  }
   const setupWallet = actionButton(
     "finish-setup",
     "FINISH SETUP",
     finishPossible(),
+    finishCB,
   );
-  const resetSetup = tactileSwitch("reset", "RESET");
+  const resetSetup = tactileSwitch("reset", "RESET", resetCB);
   return html`<div class="bottom-menu">
     ${setupWallet} ${resetSetup}
     <style>

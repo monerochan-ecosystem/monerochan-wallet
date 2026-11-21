@@ -104,7 +104,7 @@ async function ensurePlate(id: string): Promise<void> {
 }
 
 async function setInput(elId: string, value: string): Promise<void> {
-  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); if (typeof el.oninput === "function") el.oninput(); return 1; })()`);
+  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); return 1; })()`);
 }
 
 async function settings(): Promise<{ node_url: string; start_height: number | null }> {

@@ -1,6 +1,5 @@
-import { html } from "../../../mininext/mininext";
-import { addActive, tactileSwitch } from "../ui/buttons";
-import { removeActive } from "../ui/buttons";
+import { html } from "@spirobel/mininext";
+import { tactileSwitch } from "../ui/buttons";
 import { plate } from "../ui/content";
 import { walletUnlocked } from "./send";
 import {
@@ -21,18 +20,12 @@ export const walletLower = () => {
     ${lowerTopMenu()} ${plate()} ${lowerBottomMenu()}
   </div>`;
 };
-export function lowerClickHandler(e: MouseEvent) {
-  const target = e.currentTarget as HTMLElement | null;
-  const id = (e.currentTarget as HTMLElement | null)?.id as LowerButtonId;
-  if (!id || !target) return;
-  removeActive(lowerButtonIds);
-  addActive(target);
-  if (window.activeWalletPlate === id) {
-    window.activeWalletPlate = null;
-    removeActive(lowerButtonIds);
-    return;
-  }
-  window.activeWalletPlate = id;
+export function lowerClickHandler(id: LowerButtonId) {
+  window.activeWalletPlate = window.activeWalletPlate === id ? null : id;
+}
+
+function lowerSwitch(id: LowerButtonId, text: Parameters<typeof tactileSwitch>[1]) {
+  return tactileSwitch(id, text, () => lowerClickHandler(id), window.activeWalletPlate === id);
 }
 
 export type LowerButtonId =
@@ -66,11 +59,10 @@ export const sendButtonDotStyles = html` <style>
   }
 </style>`;
 export function lowerTopMenu() {
-  const historyButton = tactileSwitch(lowerButtonIds.history, "HISTORY");
-  const receiveButton = tactileSwitch(lowerButtonIds.receive, "RECEIVE");
+  const historyButton = lowerSwitch(lowerButtonIds.history, "HISTORY");
+  const receiveButton = lowerSwitch(lowerButtonIds.receive, "RECEIVE");
   const sendButtonClass = walletUnlocked() ? "red-dot" : "grey-dot";
-  const sendButton = tactileSwitch(
-    lowerButtonIds.send,
+  const sendButton = lowerSwitch(lowerButtonIds.send,
     html`<span>
       ${sendButtonDotStyles} SEND <span class="${sendButtonClass}"></span
     ></span>`,
@@ -91,10 +83,9 @@ export function lowerTopMenu() {
   </div> `;
 }
 export function lowerBottomMenu() {
-  const walletsButton = tactileSwitch(lowerButtonIds.wallets, "WALLETS");
+  const walletsButton = lowerSwitch(lowerButtonIds.wallets, "WALLETS");
   const dotColor = connectedToNode() ? "green-dot" : "grey-dot";
-  const connectionButton = tactileSwitch(
-    lowerButtonIds.connection,
+  const connectionButton = lowerSwitch(lowerButtonIds.connection,
     html`<span>
       <style>
         .green-dot {

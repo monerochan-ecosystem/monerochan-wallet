@@ -1,4 +1,4 @@
-import { html, renderRoot } from "../../mininext/mininext";
+import { html, renderRoot } from "@spirobel/mininext";
 import { router } from "./router";
 import { initSidebar, initToolInvocation, selectedWalletRouteStore } from "./init";
 import { allWallets } from "./segments/walletRoute";

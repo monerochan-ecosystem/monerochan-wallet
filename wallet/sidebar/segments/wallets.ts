@@ -7,7 +7,7 @@ import {
   writeWalletSecretsToDotEnv,
   writeScanSettingsFileDefaultLocation,
 } from "@spirobel/monero-wallet-api/unpacked";
-import { flatten, html, type MiniHtmlString } from "../../../mininext/mininext";
+import { html, type MiniHtmlString } from "@spirobel/mininext";
 import { router } from "../router";
 import { rightLower, tactileContentPlate } from "../ui/content";
 import { allWallets, currentlySelectedWallet, navigateToFirstWallet } from "./walletRoute";
@@ -28,6 +28,11 @@ let executedShareDismissed = false;
 let openAdvancedOptions = false;
 let restoreRouteMessage: MiniHtmlString = html`<div></div>`;
 let removeRouteMessage: MiniHtmlString = html`<div></div>`;
+let removeRouteInput = "";
+let restoreRouteInput = "";
+function inputValue(event: Event) {
+  return (event.target as HTMLInputElement).value;
+}
 
 function openWalletsAdvancedOptionsHandler() {
   openAdvancedOptions = !openAdvancedOptions;
@@ -36,16 +41,12 @@ function openWalletsAdvancedOptionsHandler() {
 }
 
 async function removeWalletRouteHandler() {
-  const removeInput = document.getElementById(
-    "removeWalletRoute",
-  ) as HTMLInputElement | null;
-  if (!removeInput) return;
-  removeInput.value = removeInput.value.trim();
-  const res = walletRouteFromString(removeInput.value);
+  removeRouteInput = removeRouteInput.trim();
+  const res = walletRouteFromString(removeRouteInput);
   if (res.ok) {
     await writeScanSettingsFileDefaultLocation({
       async writeCallback(settings) {
-        const toRemove = removeInput.value;
+        const toRemove = removeRouteInput;
         // Find matching wallet first so we can delete its files
         const matching = settings.wallets.find(
           (w) => w.wallet_route === toRemove,
@@ -61,7 +62,7 @@ async function removeWalletRouteHandler() {
     });
     await initWallets();
     void window.wallets?.buildWallets();
-    removeInput.value = "";
+    removeRouteInput = "";
     navigateToFirstWallet();
   } else {
     removeRouteMessage = html`<div class="options-message-negative">
@@ -72,15 +73,11 @@ async function removeWalletRouteHandler() {
 }
 
 async function restoreWalletRouteHandler() {
-  const restoreInput = document.getElementById(
-    "restoreWalletRoute",
-  ) as HTMLInputElement | null;
-  if (!restoreInput) return;
-  restoreInput.value = restoreInput.value.trim();
-  const res = walletRouteFromString(restoreInput.value);
+  restoreRouteInput = restoreRouteInput.trim();
+  const res = walletRouteFromString(restoreRouteInput);
   if (res.ok) {
     await addWalletFromRoute(res.route);
-    restoreInput.value = "";
+    restoreRouteInput = "";
     return;
   } else {
     restoreRouteMessage = html`<div class="options-message-negative">
@@ -106,8 +103,8 @@ export function walletsPlate() {
       html`<div style="display: contents;">
         ${t.error ? html`<div class="tool-hint">${t.error}</div>` : ""}
         <div class="tool-actions">
-          <span class="tool-action" id="acceptShareWallet">${acceptLabel}</span>
-          <span class="tool-action" id="dismissShareWallet">${dismissLabel}</span>
+          <span class="tool-action" id="acceptShareWallet" onclick=${acceptShareViewWalletTool}>${acceptLabel}</span>
+          <span class="tool-action" id="dismissShareWallet" onclick=${dismissShareViewWalletTool}>${dismissLabel}</span>
         </div>
       </div>`,
     );
@@ -118,51 +115,6 @@ export function walletsPlate() {
     shareOpen?.invocationId === shareBusyId &&
     shareOpen.lastType !== "execute_error";
   const toolInfoSnippet = shareWalletToolInfo(hideBusy ? null : shareOpen);
-
-  if (shareOpen?.invocationId) {
-    const dismissBtn = document.getElementById("dismissShareWallet");
-    if (dismissBtn) {
-      dismissBtn.onclick = dismissShareViewWalletTool;
-    }
-    const acceptBtn = document.getElementById("acceptShareWallet");
-    if (acceptBtn) {
-      acceptBtn.onclick = acceptShareViewWalletTool;
-    }
-  }
-
-  const openAdvancedOptionsButton = document.getElementById(
-    "openWalletsAdvancedOptionsButton",
-  ) as HTMLElement | null;
-  if (openAdvancedOptionsButton) {
-    openAdvancedOptionsButton.onclick = openWalletsAdvancedOptionsHandler;
-  }
-
-  const removeBtn = document.getElementById("removeWalletRouteBtn");
-  if (removeBtn) {
-    removeBtn.onclick = removeWalletRouteHandler;
-  }
-
-  const restoreBtn = document.getElementById("restoreWalletRouteBtn");
-  if (restoreBtn) {
-    restoreBtn.onclick = restoreWalletRouteHandler;
-  }
-  const logBtn = document.getElementById("openActionLog");
-  if (logBtn) {
-    logBtn.onclick = () => toggleActionLogPage(currentlySelectedWallet()?.primary_address);
-  }
-  const dismissShareExecuted = document.getElementById("dismissShareExecuted");
-  if (dismissShareExecuted) {
-    dismissShareExecuted.onclick = () => {
-      executedShareDismissed = true;
-    };
-  }
-  const visitShareExecuted = document.getElementById("visitShareExecuted");
-  if (visitShareExecuted && executedShareId) {
-    const visitId = executedShareId;
-    visitShareExecuted.onclick = () => {
-      void openActionLogPage(visitId, currentlySelectedWallet()?.primary_address);
-    };
-  }
 
   const walletsList: () => MiniHtmlString = () => {
     const wl = allWallets().map((wallet) => {
@@ -177,7 +129,7 @@ export function walletsPlate() {
         <div class="wallet-route-amount ${colorclass}">${amountTrun}</div>
       </div>`;
     }) || [html`<div class="wallet-route-link">no wallets</div>`];
-    return flatten(wl);
+    return html`<div>${wl}</div>`;
   };
 
   return tactileContentPlate(
@@ -265,7 +217,7 @@ export function walletsPlate() {
       ${toolInfoSnippet}
       ${walletsList()}
       <div style="margin-top: 15px; user-select: none;">
-        <span id="openWalletsAdvancedOptionsButton">advanced options</span>
+        <span id="openWalletsAdvancedOptionsButton" onclick=${openWalletsAdvancedOptionsHandler}>advanced options</span>
       </div>
       <div id="walletsAdvancedOptions">
         ${openAdvancedOptions
@@ -281,12 +233,19 @@ export function walletsPlate() {
                 ${textInput(
                   "removeWalletRoute",
                   "Enter wallet route to remove",
+                  removeRouteInput,
+                  (e) => {
+                    removeRouteInput = inputValue(e);
+                  },
                 )}
               </div>
               <div class="wallet-options-buttons">
                 ${removeRouteMessage}
 
-                <span class="wallet-options-button" id="removeWalletRouteBtn"
+                <span
+                  class="wallet-options-button"
+                  id="removeWalletRouteBtn"
+                  onclick=${removeWalletRouteHandler}
                   >REMOVE</span
                 >
               </div>
@@ -300,12 +259,17 @@ export function walletsPlate() {
                 ${textInput(
                   "restoreWalletRoute",
                   "Enter wallet route to restore",
+                  restoreRouteInput,
+                  (e) => {
+                    restoreRouteInput = inputValue(e);
+                  },
                 )}
                 <div class="wallet-options-buttons">
                   <span>${restoreRouteMessage}</span>
                   <span
                     class="wallet-options-button restore"
                     id="restoreWalletRouteBtn"
+                    onclick=${restoreWalletRouteHandler}
                     >RESTORE</span
                   >
                 </div>
@@ -314,7 +278,11 @@ export function walletsPlate() {
           : ""}
       </div>
       <div class="share-log-row">
-        <span class="tool-action share-log-btn" id="openActionLog">actionlog</span>
+        <span
+          class="tool-action share-log-btn"
+          id="openActionLog"
+          onclick=${() => toggleActionLogPage(currentlySelectedWallet()?.primary_address)}
+        >actionlog</span>
         ${shareExecutedHint()}
       </div>
     </div>`,
@@ -327,10 +295,23 @@ export function walletsPlate() {
 
 function shareExecutedHint() {
   if (!executedShareId || executedShareDismissed) return "";
+  const visitId = executedShareId;
   return html`<div class="share-executed">
     tool call executed
-    <span class="tool-action" id="visitShareExecuted">visit</span>
-    <span class="tool-action" id="dismissShareExecuted">dismiss</span>
+    <span
+      class="tool-action"
+      id="visitShareExecuted"
+      onclick=${() => void openActionLogPage(visitId, currentlySelectedWallet()?.primary_address)}
+      >visit</span
+    >
+    <span
+      class="tool-action"
+      id="dismissShareExecuted"
+      onclick=${() => {
+        executedShareDismissed = true;
+      }}
+      >dismiss</span
+    >
   </div>`;
 }
 function formatTime(timestamp: number | string) {

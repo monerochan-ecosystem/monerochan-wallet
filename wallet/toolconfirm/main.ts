@@ -9,7 +9,7 @@ import {
 } from "@spirobel/monero-wallet-api/tools";
 import { deliverToolUrl } from "@spirobel/monero-wallet-api/tools/content";
 import type { InvocationState } from "@spirobel/monero-wallet-api/unpacked";
-import { html, renderRoot } from "../../mininext/mininext";
+import { html, renderRoot } from "@spirobel/mininext";
 import { shareToolInfo, toolInfo, validityMessage } from "../sidebar/segments/toolInfo";
 import { tactileSwitch } from "../sidebar/ui/buttons";
 import { rightLower, tactileContentPlate } from "../sidebar/ui/content";
@@ -125,10 +125,6 @@ const container = document.getElementById("container");
 if (!container) throw new Error("Could not find container element");
 renderRoot({
   component: () => {
-    const openButton = document.getElementById("openSidebarFromToolconfirm");
-    if (openButton) openButton.onclick = openSidebarCallback;
-    const closeButton = document.getElementById("closeToolconfirm");
-    if (closeButton) closeButton.onclick = closeCallback;
     return html`<div class="toolconfirm-page">
       <style>
         .toolconfirm-page {
@@ -235,10 +231,10 @@ renderRoot({
           : ""}"
         id="toolconfirm-buttons"
       >
-        ${tactileSwitch("closeToolconfirm", "CLOSE")}
+        ${tactileSwitch("closeToolconfirm", "CLOSE", closeCallback)}
         ${cannotOpenDirectly()
           ? ""
-          : tactileSwitch("openSidebarFromToolconfirm", "OPEN")}
+          : tactileSwitch("openSidebarFromToolconfirm", "OPEN", openSidebarCallback)}
       </div>
     </div>`;
   },

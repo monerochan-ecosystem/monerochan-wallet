@@ -1,4 +1,4 @@
-import { html, type MiniValue } from "../../../mininext/mininext";
+import { html, type MiniValue } from "@spirobel/mininext";
 import { connectionPlate } from "../segments/connection";
 import { historyPlate } from "../segments/history";
 import { receivePlate } from "../segments/receive";
@@ -20,7 +20,7 @@ export const tactileContentPlate = (
   className: string = "content-plate",
   id: string = "",
 ) => {
-  return html`<div class="${className}" ${id ? `id="${id}"` : ""}>
+  return html`<div class="${className}" id="${id || null}">
     <div class="${className}-inner">${content}</div>
     <style>
       .${className}-inner {

@@ -1,5 +1,5 @@
 import type { FoundTransaction } from "@spirobel/monero-wallet-api/unpacked";
-import { flatten, html } from "../../../mininext/mininext";
+import { html } from "@spirobel/mininext";
 import { rightUpper, tactileContentPlate } from "../ui/content";
 import { currentlySelectedWallet } from "./walletRoute";
 import {
@@ -17,17 +17,11 @@ import {
   type ConfirmationEta,
 } from "./toolInfo";
 const openDetails: Record<string, boolean | undefined> = {};
-function setOpenDetails(tx_hash: string) {
-  const details = document.getElementById(
-    `${tx_hash}-details`,
-  ) as HTMLElement | null;
-  if (details) {
-    if (openDetails[tx_hash]) {
-      details.style.display = "block";
-    } else {
-      details.style.display = "none";
-    }
-  }
+function toggleDetails(key: string) {
+  openDetails[key] = !openDetails[key];
+}
+function detailsDisplay(key: string) {
+  return openDetails[key] ? "block" : "none";
 }
 function coinLines(
   txlog: { inputs_index: string[]; payments: { amount: string }[] } | undefined,
@@ -148,11 +142,13 @@ function txDetails(tx: FoundTransaction) {
 
 function invocationLink(invocationId: string | undefined, domId: string) {
   if (!invocationId) return html`<div></div>`;
-  const el = document.getElementById(domId);
-  if (el) el.onclick = () => openActionLogPage(invocationId, currentlySelectedWallet()?.primary_address);
   return html`<div class="tx-detail">
     <div>log:</div>
-    <div id="${domId}" style="cursor: pointer; text-decoration: underline;">
+    <div
+      id="${domId}"
+      style="cursor: pointer; text-decoration: underline;"
+      onclick=${() => openActionLogPage(invocationId, currentlySelectedWallet()?.primary_address)}
+    >
       actionlog
     </div>
   </div>`;
@@ -203,24 +199,6 @@ function PrependingTxsList() {
     .map((tx) => {
       const detailsId = `inputId0-${tx.inputs[0]?.index_on_blockchain!}`;
       const date = new Date(tx.txlog.timestamp);
-      const showDetailsBtn = document.getElementById(detailsId);
-      if (showDetailsBtn) {
-        showDetailsBtn.onclick = () => {
-          const details = document.getElementById(
-            `${detailsId}-details`,
-          ) as HTMLElement | null;
-          if (details) {
-            if (openDetails[detailsId]) {
-              details.style.display = "none";
-              openDetails[detailsId] = false;
-            } else {
-              details.style.display = "block";
-              openDetails[detailsId] = true;
-            }
-          }
-        };
-      }
-      setOpenDetails(detailsId);
       return html`<div class="tx-container">
         <div class="transaction">
           <div></div>
@@ -241,11 +219,15 @@ function PrependingTxsList() {
             })}
             <span class="pending">(pending)</span>
           </div>
-          <div class="details" id="${detailsId}">
+          <div class="details" id="${detailsId}" onclick=${() => toggleDetails(detailsId)}>
             ${openDetails[detailsId] ? "hide" : "show"} details
           </div>
         </div>
-        <div class="tx-details" id="${detailsId}-details">
+        <div
+          class="tx-details"
+          id="${detailsId}-details"
+          style="display: ${detailsDisplay(detailsId)}"
+        >
           ${openDetails[detailsId] ? preTxDetails(tx) : html`<div></div>`}
         </div>
       </div> `;
@@ -253,7 +235,7 @@ function PrependingTxsList() {
   if (!pretxs || pretxs.length === 0) {
     return html`<div></div>`;
   }
-  return flatten(pretxs);
+  return html`<div>${pretxs}</div>`;
 }
 function transactionsList() {
   const txs = currentlySelectedWallet()
@@ -262,24 +244,6 @@ function transactionsList() {
       const tx_hash = tx.tx_hash;
 
       const date = new Date(tx.outputs[0]?.block_timestamp! * 1000);
-      const showDetailsBtn = document.getElementById(tx_hash);
-      if (showDetailsBtn) {
-        showDetailsBtn.onclick = () => {
-          const details = document.getElementById(
-            `${tx_hash}-details`,
-          ) as HTMLElement | null;
-          if (details) {
-            if (openDetails[tx_hash]) {
-              details.style.display = "none";
-              openDetails[tx_hash] = false;
-            } else {
-              details.style.display = "block";
-              openDetails[tx_hash] = true;
-            }
-          }
-        };
-      }
-      setOpenDetails(tx_hash);
       const positive_or_negative = tx.amount > 0 ? "transaction-amount" : "transaction-amount-negative";
       const amount_class =
         tx.status.status === "pending" ? "" : positive_or_negative;
@@ -306,11 +270,15 @@ function transactionsList() {
               ? html`<span class="pending">(pending)</span>`
               : ""}
           </div>
-          <div class="details" id="${tx.tx_hash}">
+          <div class="details" id="${tx.tx_hash}" onclick=${() => toggleDetails(tx_hash)}>
             ${openDetails[tx.tx_hash] ? "hide" : "show"} details
           </div>
         </div>
-        <div class="tx-details" id="${tx.tx_hash}-details">
+        <div
+          class="tx-details"
+          id="${tx.tx_hash}-details"
+          style="display: ${detailsDisplay(tx_hash)}"
+        >
           ${openDetails[tx_hash] ? txDetails(tx) : html`<div></div>`}
         </div>
       </div> `;
@@ -320,7 +288,7 @@ function transactionsList() {
       no transactions found yet
     </div>`;
   }
-  return flatten(txs);
+  return html`<div>${txs}</div>`;
 }
 export function historyPlate() {
   return tactileContentPlate(

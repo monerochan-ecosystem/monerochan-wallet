@@ -2,8 +2,8 @@ import {
   convertBigIntAmount,
   truncateDecimalString,
 } from "@spirobel/monero-wallet-api/unpacked";
-import { flatten, html } from "../../../mininext/mininext";
-import { actionButton, attachHandlers } from "../ui/buttons";
+import { html } from "@spirobel/mininext";
+import { actionButton } from "../ui/buttons";
 import { middleUpper, tactileContentPlate } from "../ui/content";
 import { currentlySelectedWallet } from "./walletRoute";
 import type {
@@ -19,49 +19,24 @@ export const receiveActionButtonIds = {
 } as const;
 
 const openDetails: Record<string, boolean | undefined> = {};
-function setOpenSubaddressDetails(subaddress: string) {
-  const details = document.getElementById(
-    `details-${subaddress}`,
-  ) as HTMLElement | null;
-  if (details) {
-    if (openDetails[subaddress]) {
-      details.style.display = "block";
-    } else {
-      details.style.display = "none";
-    }
-  }
+function toggleDetails(key: string) {
+  openDetails[key] = !openDetails[key];
+}
+function detailsDisplay(key: string) {
+  return openDetails[key] ? "block" : "none";
 }
 export function receivePlate() {
-  attachHandlers(receiveActionButtonIds, receiveClickHandler);
   const subaddresses = currentlySelectedWallet()?.subaddresses.toReversed();
   let plateContent = html`<div></div>`;
   if (subaddresses?.length) {
-    plateContent = flatten(
+    plateContent = html`<div>${
       subaddresses.map((subaddress) => {
-        const showDetailsBtn = document.getElementById(subaddress.address);
-        if (showDetailsBtn) {
-          showDetailsBtn.onclick = () => {
-            const details = document.getElementById(
-              `details-${subaddress.address}`,
-            ) as HTMLElement | null;
-            if (details) {
-              if (openDetails[subaddress.address]) {
-                details.style.display = "none";
-                openDetails[subaddress.address] = false;
-              } else {
-                details.style.display = "block";
-                openDetails[subaddress.address] = true;
-              }
-            }
-          };
-        }
         const colorclass =
           (subaddress.received_amount || 0n) > 0
             ? "amount-positive"
             : "amount-zero";
         const amount = convertBigIntAmount(subaddress.received_amount || 0n);
         const amountTrun = truncateDecimalString(amount, 3);
-        setOpenSubaddressDetails(subaddress.address);
 
         return html`<div class="subaddress-container">
           <div class="subaddress" id="subaddress-${subaddress.address}">
@@ -69,17 +44,25 @@ export function receivePlate() {
           </div>
           <div>
             <div class="amount ${colorclass}">${amountTrun}</div>
-            <div class="show-info" id="${subaddress.address}">
+            <div
+              class="show-info"
+              id="${subaddress.address}"
+              onclick=${() => toggleDetails(subaddress.address)}
+            >
               ${openDetails[subaddress.address] ? "hide" : "show"} details
             </div>
           </div>
-          <div class="subaddress-details" id="details-${subaddress.address}">
+          <div
+            class="subaddress-details"
+            id="details-${subaddress.address}"
+            style="display: ${detailsDisplay(subaddress.address)}"
+          >
             subadddress minor index: ${subaddress.minor}
             ${miniTransactionsList(subaddress)}
           </div>
         </div>`;
-      }),
-    );
+      })
+    }</div>`;
   } else {
     plateContent = html`<div class="no-subaddress">
       no subaddresses <br />
@@ -175,9 +158,13 @@ export function receivePlate() {
       "max(425px, calc(100vh - 480px))",
     )}
     <div class="actions">
-      ${actionButton(receiveActionButtonIds.newAddress, "NEW ADDRESS")}
+      ${actionButton(receiveActionButtonIds.newAddress, "NEW ADDRESS", true, () =>
+        receiveClickHandler(receiveActionButtonIds.newAddress),
+      )}
       <div></div>
-      ${actionButton(receiveActionButtonIds.copyAddress, "COPY")}
+      ${actionButton(receiveActionButtonIds.copyAddress, "COPY", true, () =>
+        receiveClickHandler(receiveActionButtonIds.copyAddress),
+      )}
     </div>
   </div>`;
 }
@@ -196,15 +183,9 @@ function selectTextAndCopy(address: string) {
   return true;
 }
 
-export function receiveClickHandler(e: MouseEvent) {
-  console.log("receiveClickHandler");
-  console.log(e);
-  const target = e.currentTarget as HTMLElement | null;
-  const id = (e.currentTarget as HTMLElement | null)
-    ?.id as ReceiveActionButtonIds;
-  if (!id || !target) return;
+export function receiveClickHandler(id: ReceiveActionButtonIds) {
   if (id === receiveActionButtonIds.newAddress) {
-    const subaddress = currentlySelectedWallet()?.makeSubaddress();
+    currentlySelectedWallet()?.makeSubaddress();
   }
   if (id === receiveActionButtonIds.copyAddress) {
     const subaddresses = currentlySelectedWallet()?.subaddresses.toReversed();
@@ -227,24 +208,6 @@ function miniTransactionsList(subaddress: Subaddress) {
       const tx_hash = tx.tx_hash;
 
       const date = new Date(tx.outputs[0]?.block_timestamp! * 1000);
-      const showDetailsBtn = document.getElementById(tx_hash);
-      if (showDetailsBtn) {
-        showDetailsBtn.onclick = () => {
-          const details = document.getElementById(
-            `${tx_hash}-details`,
-          ) as HTMLElement | null;
-          if (details) {
-            if (openDetails[tx_hash]) {
-              details.style.display = "none";
-              openDetails[tx_hash] = false;
-            } else {
-              details.style.display = "block";
-              openDetails[tx_hash] = true;
-            }
-          }
-        };
-      }
-      setOpenTxDetails(tx_hash);
       const positive_or_negative = tx.amount > 0 ? "amount" : "amount-negative";
       const amount_class =
         tx.status.status === "pending" ? "" : positive_or_negative;
@@ -271,11 +234,19 @@ function miniTransactionsList(subaddress: Subaddress) {
               ? html`<span class="pending">(pending)</span>`
               : ""}
           </div>
-          <div class="details" id="${tx.tx_hash}">
+          <div
+            class="details"
+            id="${tx.tx_hash}"
+            onclick=${() => toggleDetails(tx_hash)}
+          >
             ${openDetails[tx.tx_hash] ? "hide" : "show"} details
           </div>
         </div>
-        <div class="tx-details" id="${tx.tx_hash}-details">
+        <div
+          class="tx-details"
+          id="${tx.tx_hash}-details"
+          style="display: ${detailsDisplay(tx_hash)}"
+        >
           ${openDetails[tx_hash] ? txDetails(tx) : html`<div></div>`}
         </div>
       </div> `;
@@ -285,21 +256,9 @@ function miniTransactionsList(subaddress: Subaddress) {
       no transactions found yet
     </div>`;
   }
-  return flatten(txs);
+  return html`<div>${txs}</div>`;
 }
 
-function setOpenTxDetails(tx_hash: string) {
-  const details = document.getElementById(
-    `${tx_hash}-details`,
-  ) as HTMLElement | null;
-  if (details) {
-    if (openDetails[tx_hash]) {
-      details.style.display = "block";
-    } else {
-      details.style.display = "none";
-    }
-  }
-}
 function txDetails(tx: FoundTransaction) {
   const sub_index = tx.outputs[0]?.subaddress_index;
   const sub_snippet = sub_index
