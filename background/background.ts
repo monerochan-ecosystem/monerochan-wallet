@@ -23,7 +23,7 @@ async function initWallets() {
     retryDelayMs: 1000,
     no_stats: true,
     actionLogBackend: "idb",
-    extensionMessageBus: "worker",
+    extensionMessageBus: "background",
   });
   return wallets;
 }
