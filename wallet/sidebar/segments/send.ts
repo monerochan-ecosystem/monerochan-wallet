@@ -20,6 +20,7 @@ import {
   forceStandardMode,
   noteStandardDraft,
   resetCoinControl,
+  selfSpendIsOn,
   selectedAmountLine,
   setSendError,
   setSpendDismissHandler,
@@ -105,7 +106,7 @@ async function sendCallback() {
   // safe side of the top slider. fire is the only side that may send.
   if (!walletUnlocked()) return;
   if (coinControlIsOn()) {
-    const open = spendOpen();
+    const open = selfSpendIsOn() ? null : spendOpen();
     await submitCoinControl(
       markJustSent,
       async (invocationId) => {
@@ -281,7 +282,7 @@ export function sendPlateContent() {
     amountAtomic: row.amountAtomic,
     parsed: row.parsed,
   });
-  const raw = spendOpen();
+  const raw = selfSpendIsOn() ? null : spendOpen();
   if (raw && raw.invocationId !== ignoredSpendId) ignoredSpendId = null;
   const open =
     raw && raw.invocationId === ignoredSpendId ? null : raw;

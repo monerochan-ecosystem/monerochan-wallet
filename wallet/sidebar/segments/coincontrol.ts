@@ -15,7 +15,7 @@ import {
 } from "./walletRoute";
 
 import { openActionLogTx } from "../../actionlog/open";
-import { doubleSpendWarning, inputRecovery, sendFailureMessage } from "../../failedSend";
+import { doubleSpendWarning, inputRecovery, selfSpendInputs, sendFailureMessage } from "../../failedSend";
 
 const recoveryErrors = new Map<string, string>();
 const pendingRebroadcasts = new Map<string, { pa: string; row: ScanCacheOpened["failed_txs"][number] }>();
@@ -45,6 +45,7 @@ type CoinControlState = {
   rows: CoinOutputRow[];
   sweep: boolean;
   fee: bigint | null;
+  selfSpendInputs?: string[];
   release?: { inputId: string; index: number; pending: boolean; error?: string };
 };
 const ccByRoute = new Map<string, CoinControlState>();
@@ -78,6 +79,25 @@ export function coinControlIsOn() {
   return coinControlMode;
 }
 
+export function selfSpendIsOn() {
+  return coinControlMode && !!cc().selfSpendInputs;
+}
+
+export function prepareSelfSpend(wallet: ScanCacheOpened, index: number): boolean {
+  const inputs = selfSpendInputs(wallet.cache, index);
+  if (!inputs.length) return false;
+  const row = freshOutputRow();
+  const state = cc(wallet.primary_address);
+  state.rows = [row];
+  state.sweep = true;
+  state.fee = null;
+  state.selfSpendInputs = inputs;
+  coinControlMode = selectInputOpen = true;
+  void setOutputAddress(row, wallet.primary_address);
+  void estimateSweepFee(state, wallet);
+  return true;
+}
+
 export function noteStandardDraft(draft: StandardDraft) {
   notedDraft = draft;
 }
@@ -92,6 +112,7 @@ export function resetCoinControl() {
   checkedInputIds.clear();
   cc().sweep = false;
   cc().fee = null;
+  delete cc().selfSpendInputs;
   delete cc().release;
   selectInputOpen = false;
   cc().rows = [];
@@ -130,7 +151,7 @@ function toggleCoinControlMode() {
     return;
   }
   const first = cc().rows[0];
-  if (first) {
+  if (first && !cc().selfSpendInputs) {
     releasedDraft = {
       amount: first.amount,
       address: first.address,
@@ -142,7 +163,7 @@ function toggleCoinControlMode() {
 }
 
 function sweepBaseSum() {
-  if (checkedInputIds.size > 0) return selectedInputSum();
+  if (cc().selfSpendInputs || checkedInputIds.size > 0) return selectedInputSum();
   return (currentlySelectedWallet()?.spendableInputs() ?? []).reduce(
     (sum, input) => sum + input.amount,
     0n,
@@ -160,7 +181,10 @@ async function toggleSweep() {
   kept.amount = "";
   kept.amountAtomic = null;
   state.rows = [kept];
-  const wallet = currentlySelectedWallet();
+  await estimateSweepFee(state, currentlySelectedWallet());
+}
+
+async function estimateSweepFee(state: CoinControlState, wallet?: ScanCacheOpened) {
   if (!wallet) return;
   try {
     const estimate = await wallet.getFeeEstimate();
@@ -175,7 +199,10 @@ function toggleSelectInput() {
 }
 
 function selectedInputSum() {
-  const inputs = currentlySelectedWallet()?.spendableInputs() ?? [];
+  const wallet = currentlySelectedWallet();
+  const selfSpend = cc().selfSpendInputs;
+  if (selfSpend) return selfSpend.reduce((sum, id) => sum + (wallet?.cache.outputs[id]?.amount ?? 0n), 0n);
+  const inputs = wallet?.spendableInputs() ?? [];
   let sum = 0n;
   for (const input of inputs) {
     if (checkedInputIds.has(String(input.index_on_blockchain)))
@@ -204,10 +231,17 @@ function coinOutputsValid() {
   );
 }
 
+function selfSpendInputsAvailable(ids: string[]) {
+  const available = new Set(currentlySelectedWallet()?.spendableInputs().map((input) => String(input.index_on_blockchain)));
+  return ids.length > 0 && ids.every((id) => available.has(id));
+}
+
 export function coinControlSendReady(sendLocked: boolean) {
   if (!connectedToNode() || !window.unlocked || sendLocked) return false;
   if (!coinOutputsValid()) return false;
   if (cc().sweep) {
+    const selfSpend = cc().selfSpendInputs;
+    if (selfSpend) return selfSpendInputsAvailable(selfSpend);
     const all = currentlySelectedWallet()?.spendableInputs() ?? [];
     if (checkedInputIds.size === 0) return all.length > 0;
     return selectedInputSum() > 0n;
@@ -239,7 +273,7 @@ export async function submitCoinControl(
   pruneCheckedInputs();
   const sweep = cc().sweep;
   const address = (cc().rows[0]?.address ?? "").trim();
-  const input_indexes = [...checkedInputIds];
+  const input_indexes = cc().selfSpendInputs ?? [...checkedInputIds];
   const payments = cc().rows.map((row) => ({
     address: row.address.trim(),
     amount: (row.amountAtomic ?? 0n).toString(),
@@ -313,6 +347,7 @@ function ccStyle() {
     .cc-toolbar-actions { display: flex; align-items: center; gap: 6px; }
     .cc-toolbar .cc-btn { margin: 0; }
     .cc-output-label { min-height: 1.2em; margin-right: 12px; text-align: right; font-size: 12px; font-weight: normal; line-height: 1.2; color: rgba(255, 255, 255, 0.75); user-select: none; }
+    .cc-own-address { display: block; margin-top: 4px; color: #eee; font-size: 12px; font-weight: normal; }
     .cc-modes { display: inline-flex; width: fit-content; margin: 0; }
     .cc-modes .cc-btn { position: relative; margin: 0; border-radius: 0; }
     .cc-modes .cc-btn:first-child { border-radius: 4px 0 0 4px; }
@@ -326,6 +361,7 @@ function ccStyle() {
     .failed-send-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
     .failed-send-heading .cc-btn { margin-top: 0; }
     .failed-send-error { margin: 6px 0; }
+    .cc-self-spend-hint { color: #eee; margin: 8px 0; }
     .cc-btn {
       box-shadow:
         inset 0 4px 12px rgba(0, 0, 0, 0.45),
@@ -489,9 +525,13 @@ export function sendModeSelector(activeTool = false): MiniHtmlString {
 }
 
 function coinOutputFields(row: CoinOutputRow, number: number): MiniHtmlString {
+  const selfSpend = selfSpendIsOn();
+  const ownAddressHint = selfSpend && row.address === currentlySelectedWallet()?.primary_address
+    ? `cc-own-address-${row.key}` : undefined;
   return html`<div class="input-block cc-output-fields" data-output-key="${row.key}">
     ${cc().sweep ? html`<span hidden></span>` : html`<div class="input-block"><input type="text" id="cc-amt-${row.key}" class="send-input-element" placeholder="Enter amount" value="${row.amount}" oninput=${(e: Event) => setOutputAmount(row, inputValue(e))} />${selectedAmountLine(row.amountAtomic, "")}</div>`}
-    <input type="text" id="cc-addr-${row.key}" class="send-input-element" placeholder="Enter address" value="${row.address}" oninput=${(e: Event) => void setOutputAddress(row, inputValue(e))} />
+    <input type="text" id="cc-addr-${row.key}" class="send-input-element" placeholder="Enter address" value="${row.address}" readonly=${selfSpend} aria-describedby=${ownAddressHint} oninput=${(e: Event) => void setOutputAddress(row, inputValue(e))} />
+    ${ownAddressHint ? html`<small class="cc-own-address" id="${ownAddressHint}">This is your wallet’s primary address.</small>` : ""}
     <div class="cc-output-label">output ${number}</div>
   </div>`;
 }
@@ -575,18 +615,19 @@ function inputReleaseConfirmation(wallet: ScanCacheOpened) {
 export function coinControlView(): MiniHtmlString {
   if (!coinControlMode) return html`<div hidden></div>`;
   const wallet = currentlySelectedWallet();
-  const reservedIds = wallet && selectInputOpen
+  const selfSpend = cc().selfSpendInputs;
+  const reservedIds = wallet && !selfSpend && selectInputOpen
     ? Object.keys(wallet.cache.pending_spent_utxos ?? {}).filter((id) =>
         isInputLocked(wallet.cache, id) && inputRecovery(wallet.cache, id)?.locked)
     : [];
-  const reserved = reservedIds.flatMap((id) => {
+  const reserved = (selfSpend ?? reservedIds).flatMap((id) => {
     const output = wallet?.cache.outputs[id];
     return output ? [output] : [];
   });
-  const inputs = [...(wallet?.spendableInputs() ?? []), ...reserved];
+  const inputs = selfSpend ? reserved : [...(wallet?.spendableInputs() ?? []), ...reserved];
   const inputRows = inputs.map((input) => {
     const id = String(input.index_on_blockchain);
-    const selected = checkedInputIds.has(id);
+    const selected = !!selfSpend || checkedInputIds.has(id);
     const recovery = wallet && (selected || isInputLocked(wallet.cache, id)) ? inputRecovery(wallet.cache, id) : undefined;
     return html`<div class="cc-line">
       <input
@@ -594,7 +635,7 @@ export function coinControlView(): MiniHtmlString {
         type="checkbox"
         id="cc-in-${id}"
         checked=${selected}
-        disabled=${!!recovery?.locked}
+        disabled=${!!selfSpend || !!recovery?.locked}
         onchange=${(e: Event) => toggleInputSelection(id, e)}
       />
       <label class="cc-amt" for="cc-in-${id}">${convertBigIntAmount(input.amount)}</label>
@@ -617,7 +658,7 @@ export function coinControlView(): MiniHtmlString {
     ${index > 0 ? coinOutputFields(row, index + 1) : ""}
     ${addressPreviewLine(row.address, row.parsed, false, index + 1)}
     ${cc().sweep ? html`<div>
-      ${previewLine("selected inputs:", convertBigIntAmount(sweepBaseSum()))}
+      ${selfSpend ? "" : previewLine("selected inputs:", convertBigIntAmount(sweepBaseSum()))}
       ${previewLine("fee estimate:", cc().fee == null ? "..." : convertBigIntAmount(cc().fee!))}
     </div>` : index > 0 ? html`<button type="button" class="cc-btn" id="cc-rm-${row.key}" onclick=${() => removeOutput(row.key)}>remove</button>` : ""}
   </div>`);
@@ -627,11 +668,11 @@ export function coinControlView(): MiniHtmlString {
           ? html`<div>${inputRows}</div>`
           : html`<div>no spendable inputs</div>`}
         <div>
-          ${checkedInputIds.size} selected
+          ${selfSpend?.length ?? checkedInputIds.size} selected
           ${convertBigIntAmount(inSum)}
         </div>
         <div style="color: #e74c3c;">${short}</div>
-        ${cc().sweep && checkedInputIds.size === 0
+        ${cc().sweep && !selfSpend && checkedInputIds.size === 0
           ? html`<div>no selection sweeps all spendable inputs</div>`
           : ""}
       </div>`
@@ -641,10 +682,13 @@ export function coinControlView(): MiniHtmlString {
     ${list}
     ${selectInputOpen && wallet ? inputReleaseConfirmation(wallet) : ""}
     ${rows}
-    <div>
+    ${selfSpend ? html`<p class="cc-self-spend-hint">
+      ${selfSpendInputsAvailable(selfSpend) ? "Inputs available." : "Use Release next to a reserved input."}
+      Self Spend sends the selected amount, less the fee, to your primary address.
+    </p>` : html`<div>
       <span class="cc-btn ${cc().sweep ? "cc-btn-on" : ""}" id="cc-sweep" onclick=${toggleSweep}
         >external sweep</span
       >
-    </div>
+    </div>`}
   </div>`;
 }

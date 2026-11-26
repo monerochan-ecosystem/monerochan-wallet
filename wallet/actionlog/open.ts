@@ -45,3 +45,10 @@ export function openActionLogPage(invocationId?: string, wallet?: string) {
 export function openActionLogTx(wallet: string, index: number) {
   return openActionLogRoute(`/tx/${wallet}/${index}`, wallet);
 }
+
+export async function openSelfSpend(wallet: string, index: number) {
+  const url = new URL(browser.runtime.getURL("sidebar.html"));
+  url.searchParams.set("wallet", wallet);
+  url.searchParams.set("self-spend", String(index));
+  await browser.tabs.create({ url: url.href });
+}

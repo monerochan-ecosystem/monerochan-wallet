@@ -11,7 +11,8 @@ import { html, type MiniHtmlString } from "@spirobel/mininext";
 import { actionLog, actionLogHeight, actionLogWallets, actionLogWalletsOpened } from "./init";
 import { router } from "./router";
 import { formatConfirmationEta, minedSpendHeight, txLogConfirmationEta } from "../sidebar/segments/toolInfo";
-import { doubleSpendWarning, failedSendState, sendFailureMessage } from "../failedSend";
+import { doubleSpendWarning, failedSendState, selfSpendInputs, sendFailureMessage } from "../failedSend";
+import { openSelfSpend } from "./open";
 
 export type LogWallet = {
   primary_address: string;
@@ -744,12 +745,13 @@ function txRecoveryActions(row: TxLogRow) {
   if (!wallet) return "";
   const canRelease = canReleaseInputs(wallet.cache, row.log.index);
   const canRebroadcast = canRebroadcastTx(wallet.cache, row.log.index);
+  const canSelfSpend = wallet.wallet_route && selfSpendInputs(wallet.cache, row.log.index).length > 0;
 
   const key = `${row.wallet}:${row.log.index}`;
   if (txlogRecovery?.key !== key) txlogRecovery = { key, open: txFailed(row.log), confirm: false, pending: false, error: "" };
   const state = txlogRecovery;
   const showRebroadcast = canRebroadcast || state.rebroadcast;
-  if (!canRelease && !showRebroadcast && !state.error) return "";
+  if (!canRelease && !showRebroadcast && !canSelfSpend && !state.error) return "";
   const rebroadcastLabel = state.rebroadcast === "pending" ? "sending…" : state.rebroadcast ?? "rebroadcast";
   const params = { primary_address: row.wallet, tx_log_index: row.log.index };
   async function recover(action: () => Promise<unknown>, rebroadcast = false) {
@@ -774,6 +776,8 @@ function txRecoveryActions(row: TxLogRow) {
     ${canRelease ? html`<p>The inputs for this transaction are reserved.</p>` : ""}
     ${showRebroadcast ? html`<button type="button" class="log-jump log-rebroadcast" id="txlog-rebroadcast" disabled=${state.pending || !canRebroadcast} onclick=${() => void recover(() => wallets.rebroadcastTx(params), true)}><span aria-live="polite">${rebroadcastLabel}</span></button>` : ""}
     ${canRelease && !state.confirm ? html`<button type="button" class="log-jump" id="txlog-free-inputs" disabled=${state.pending} onclick=${() => { state.confirm = true; }}>free inputs</button>` : ""}
+    ${canSelfSpend ? html`<button type="button" class="log-jump" id="txlog-self-spend" aria-describedby="txlog-self-spend-hint" disabled=${state.pending} onclick=${() => void recover(() => openSelfSpend(row.wallet, row.log.index))}>self spend</button>
+    <p id="txlog-self-spend-hint">Prepare a new payment to this wallet with the listed inputs.${canRelease ? " Free them before you send." : ""}</p>` : ""}
     ${canRelease && state.confirm ? html`<div id="txlog-release-confirmation">
       <p>The original transaction can still be accepted after you free its inputs.</p>
       <details><summary>why a new spend can affect privacy</summary><p>${doubleSpendWarning}</p></details>

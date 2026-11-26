@@ -77,6 +77,16 @@ test("opening a txlog detail uses its wallet and transaction index", async () =>
   expect(updated).toEqual([`${base}?wallet=wallet-b#/tx/wallet-a/4`]);
 });
 
+test("self spend opens a wallet draft linked to the exact TxLog row", async () => {
+  const { openSelfSpend } = await import("../wallet/actionlog/open");
+  await openSelfSpend("wallet-b", 0);
+  const url = new URL(opened[0]!);
+  expect(url.pathname).toBe("/sidebar.html");
+  expect(url.searchParams.get("wallet")).toBe("wallet-b");
+  expect(url.searchParams.get("self-spend")).toBe("0");
+  expect(updated).toEqual([]);
+});
+
 test("visiting the current route does not reload the open page", async () => {
   for (const invocationId of [undefined, "call-1"]) {
     const url = actionLogPageUrl(invocationId, "wallet-a");
