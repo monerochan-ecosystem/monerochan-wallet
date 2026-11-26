@@ -1,7 +1,7 @@
-import { cdp, debugHttp, recordTabs, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, holdMerchantReply, recordTabs, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet, mineTo, nodeHeight, pointShopsAtRegtest, shopPaymentLinkId } from "./setup.js";
-// Recorded tool 001 send. Slow mode holds send_raw_transaction so the
-// "sent tx to node" hint stays on screen for 8 seconds before success.
+// slow mode holds the payer request and merchant reply so
+// "awaiting node reply" stays on screen for 8 seconds before success.
 // Realtime mode (SLOW=0) slows nothing down.
 // usage: bun test/browser-send-record.ts
 //        SLOW=0 bun test/browser-send-record.ts
@@ -174,6 +174,7 @@ mark("ready");
 await new Promise((r) => setTimeout(r, 3000));
 
 if (SLOW) {
+  await using merchant = await holdMerchantReply(startUrl);
   const clicked = await panel(`(() => {
     const b = document.getElementById("send-action");
     if (!b || !b.classList.contains("action-button") || typeof b.onclick !== "function") return "not ready";
@@ -201,7 +202,7 @@ if (SLOW) {
     const start = Date.now();
     while (Date.now() - start < 10000) {
       const t = String(await panel(`document.body.innerText`) || "");
-      const line = t.split("\n").find((row) => row.includes("sent tx to node"));
+      const line = t.split("\n").find((row) => row.includes("awaiting node reply"));
       if (line) { hintAt = Date.now(); console.log("hint:", line.trim()); break; }
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -210,7 +211,7 @@ if (SLOW) {
     for (const row of held) {
       await send("Fetch.continueRequest", { requestId: row.requestId }, row.sessionId);
     }
-    throw new Error("sent tx to node was not on the send plate while the node was held");
+    throw new Error("awaiting node reply was not on the send plate while the node was held");
   }
   // keep the hint on screen for 8 seconds before letting the answer through
   const wait = 8000 - (Date.now() - hintAt);
@@ -218,6 +219,7 @@ if (SLOW) {
   for (const row of held.splice(0, held.length)) {
     await send("Fetch.continueRequest", { requestId: row.requestId }, row.sessionId);
   }
+  await merchant.release();
   timing["hint"] = (hintAt - vt0) / 1000;
   mark("released");
   console.log("node answer released after 8s of hint");

@@ -39,6 +39,7 @@ import type {
 import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/unpacked";
 import { openActionLogPage, toggleActionLogPage } from "../../actionlog/open";
 import { formatTime, toolInfo, validityMessage } from "./toolInfo";
+import { sendStatus } from "../../failedSend";
 
 // the send plate is per wallet route. keep its state per route too.
 type SendDraft = {
@@ -186,36 +187,12 @@ function latestLog(pa: string): TxLog | null {
 let last_tx_log: TxLog | null = null;
 function readLastTxLog() {
   last_tx_log = latestLog(currentlySelectedWallet()?.primary_address ?? "");
-  setTXlogStatusMsg();
+  const status = last_tx_log && sendStatus(last_tx_log);
+  lastTxLogMessage = status ? status.message + " " + formatTime(last_tx_log!.timestamp) : "";
+  lastTxLogMessageClass = status ? "txlog-" + status.style : "";
 }
 let lastTxLogMessage = "";
 let lastTxLogMessageClass = "";
-function setTXlogStatusMsg() {
-  lastTxLogMessage = "";
-  lastTxLogMessageClass = "";
-  if (!last_tx_log) return;
-  // the first tx log write has no node answer yet. that is not a failure.
-  if (!last_tx_log.sendResult && !last_tx_log.error) {
-    lastTxLogMessage =
-      "sent tx to node " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-neutral";
-    return;
-  }
-  if (last_tx_log.sendResult?.status === "OK") {
-    lastTxLogMessage =
-      "successfully sent transaction " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-success";
-    return;
-  }
-  if (last_tx_log.error && last_tx_log.error.includes("not enough funds")) {
-    lastTxLogMessage = "not enough funds " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-error";
-    return;
-  }
-  lastTxLogMessage =
-    "failed to send transaction " + formatTime(last_tx_log.timestamp);
-  lastTxLogMessageClass = "txlog-error";
-}
 function clearSendForm(invocationId?: string | null, key = routeKey()) {
   if (invocationId) ignoredSpendId = invocationId;
   resetCoinControl();

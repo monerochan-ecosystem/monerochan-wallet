@@ -118,3 +118,10 @@ test("the warning does not promise that a local node hides conflicting transacti
   expect(failure.doubleSpendWarning).toContain("real input");
   expect(failure.doubleSpendWarning).toContain("peers");
 });
+
+test("send status follows the saved broadcast attempt and either node's acceptance", () => {
+  expect(failure.sendStatus({})).toEqual({ message: "preparing transaction", style: "neutral" });
+  expect(failure.sendStatus({ last_broadcast_at: null })).toEqual({ message: "preparing transaction", style: "neutral" });
+  expect(failure.sendStatus({ last_broadcast_at: now })).toEqual({ message: "awaiting node reply", style: "neutral" });
+  expect(failure.sendStatus({ broadcast_accepted: true, error: "timeout" })).toEqual({ message: "successfully sent transaction", style: "success" });
+});

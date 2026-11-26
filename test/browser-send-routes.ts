@@ -258,12 +258,12 @@ try {
   await fill("#addressInput", DECOY);
   await beginSend();
   await checkpoint("non-first-wallet-pending", b);
-  await expectStatus(b, "sent tx to node", "non-first wallet shows the held send immediately");
+  await expectStatus(b, "awaiting node reply", "non-first wallet shows the held send immediately");
   for (let index = 0; index < 3; index++) {
     await switchTo(a);
     await expectEmpty(a, "other route hides pending message " + index);
     await switchTo(b);
-    await expectStatus(b, "sent tx to node", "pending message returns to its route " + index);
+    await expectStatus(b, "awaiting node reply", "pending message returns to its route " + index);
   }
   await switchTo(a);
   await fill("#amountInput", "0.25");
@@ -281,7 +281,7 @@ try {
   await fill('input[id^="cc-amt-"]', "0.42");
   await release();
   await wait("non-first send accepted", () => diskLog(b), (log) => log?.status === "OK");
-  await expectStatus(a, "sent tx to node", "another route keeps its own pending send");
+  await expectStatus(a, "awaiting node reply", "another route keeps its own pending send");
   check("other route coin control draft survives send completion", await read(`document.querySelector('input[id^="cc-amt-"]')?.value`) === "0.42");
   await release();
   await wait("overlapping first route send accepted", () => diskLog(a), (log) => log?.status === "OK");
@@ -296,7 +296,7 @@ try {
 
   const aId = await toolCall(a);
   await beginSend();
-  await expectStatus(a, "sent tx to node", "first route shows its held tool send");
+  await expectStatus(a, "awaiting node reply", "first route shows its held tool send");
   await switchTo(b);
   await expectStatus(b, "successfully sent transaction", "other route keeps its own earlier result");
   check("tool-call hint does not leak to another route", (await state()).hint === "", await state());
@@ -314,7 +314,7 @@ try {
 
   const bId = await toolCall(b);
   await beginSend();
-  await expectStatus(b, "sent tx to node", "new send appears after the old result was reset");
+  await expectStatus(b, "awaiting node reply", "new send appears after the old result was reset");
   await switchTo(a);
   await expectStatus(a, "successfully sent transaction", "first route stays unchanged while second send is held");
   await visit(aId, "first route keeps its earlier tool-call link");

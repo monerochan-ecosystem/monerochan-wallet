@@ -63,6 +63,62 @@ export async function targetByUrl(match: string): Promise<{ id: string; url: str
   return t;
 }
 
+export async function holdMerchantReply(checkoutUrl: string) {
+  const pages = new Map<string, Promise<unknown>>();
+  const held: { requestId: string; sessionId: string }[] = [];
+  const urlPattern = new URL("/handover?checkoutId=*", checkoutUrl).href;
+  let releasing = false;
+  const browser = await cdp((event) => {
+    if (event.method === "Target.attachedToTarget") {
+      const { sessionId, waitingForDebugger } = event.params;
+      const ready = browser.send("Fetch.enable", {
+        patterns: [{ urlPattern, requestStage: "Response" }],
+      }, sessionId).finally(async () => {
+        if (waitingForDebugger) await browser.send("Runtime.runIfWaitingForDebugger", {}, sessionId);
+      });
+      pages.set(sessionId, ready);
+      ready.catch(() => {});
+    } else if (event.method === "Target.detachedFromTarget") {
+      pages.delete(event.params.sessionId);
+    } else if (event.method === "Fetch.requestPaused" && event.sessionId) {
+      if (releasing) {
+        browser.send("Fetch.continueResponse", { requestId: event.params.requestId }, event.sessionId).catch(() => {});
+      } else {
+        held.push({ requestId: event.params.requestId, sessionId: event.sessionId });
+        console.log("merchant handover reply held");
+      }
+    }
+  });
+  try {
+    // handover can use the checkout tab or open a replacement tab.
+    await browser.send("Target.setAutoAttach", {
+      autoAttach: true, waitForDebuggerOnStart: true, flatten: true,
+      filter: [{ type: "page" }, { exclude: true }],
+    });
+    await Promise.all(pages.values());
+  } catch (error) {
+    browser.ws.close();
+    throw error;
+  }
+
+  async function release() {
+    if (releasing) return;
+    releasing = true;
+    try {
+      for (const { requestId, sessionId } of held) {
+        if (pages.has(sessionId)) await browser.send("Fetch.continueResponse", { requestId }, sessionId);
+      }
+      await Promise.all([...pages].map(async ([sessionId, ready]) => {
+        await ready;
+        if (pages.has(sessionId)) await browser.send("Fetch.disable", {}, sessionId);
+      }));
+    } finally {
+      browser.ws.close();
+    }
+  }
+  return { release, [Symbol.asyncDispose]: release };
+}
+
 async function targetList(): Promise<any[]> {
   return await (await fetch(debugHttp() + "/json/list")).json();
 }

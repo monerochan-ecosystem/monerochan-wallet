@@ -1,6 +1,14 @@
-import { canReleaseInputs, isInputLocked, txFailed, type ScanCache } from "@spirobel/monero-wallet-api/unpacked";
+import { canReleaseInputs, isInputLocked, txFailed, type ScanCache, type TxLog } from "@spirobel/monero-wallet-api/unpacked";
 
 export const doubleSpendWarning = "A failed reply does not prove that a transaction was rejected. A new spend of the same input uses the same key image. An observer who sees both transactions can compare their rings. Different decoys can narrow or identify the real input. Your own node removes a remote RPC observer, but does not remove this risk if both transactions reach peers.";
+
+export function sendStatus(row: Pick<TxLog, "broadcast_accepted" | "last_broadcast_at" | "sendResult" | "error">) {
+  if (row.broadcast_accepted || row.sendResult?.status === "OK")
+    return { message: "successfully sent transaction", style: "success" };
+  if (row.error || row.sendResult)
+    return { message: row.error?.includes("not enough funds") ? "not enough funds" : "failed to send transaction", style: "error" };
+  return { message: row.last_broadcast_at == null ? "preparing transaction" : "awaiting node reply", style: "neutral" };
+}
 
 export function sendFailureMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? "");
