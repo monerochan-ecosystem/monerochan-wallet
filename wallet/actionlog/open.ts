@@ -19,21 +19,29 @@ export async function toggleActionLogPage(wallet?: string) {
     await browser.tabs.remove(ids);
     return;
   }
-  window.open(actionLogPageUrl(undefined, wallet));
+  await browser.tabs.create({ url: actionLogPageUrl(undefined, wallet) });
 }
 
-export async function openActionLogPage(invocationId?: string, wallet?: string) {
+async function openActionLogRoute(hash: string, wallet?: string) {
   const open = await actionLogTabs();
   const tab = open[0];
+  const url = new URL(tab?.url ?? actionLogPageUrl(undefined, wallet));
+  url.hash = hash;
   if (tab?.id != null) {
     // Change only the route. Keep the open page and its in-memory filter.
-    const url = new URL(tab.url ?? actionLogPageUrl(undefined, wallet));
-    url.hash = invocationId ? `/invo/${invocationId}` : "/";
     await browser.tabs.update(tab.id, {
       ...(url.href !== tab.url ? { url: url.href } : {}),
       active: true,
     });
     return;
   }
-  window.open(actionLogPageUrl(invocationId, wallet));
+  await browser.tabs.create({ url: url.href });
+}
+
+export function openActionLogPage(invocationId?: string, wallet?: string) {
+  return openActionLogRoute(invocationId ? `/invo/${invocationId}` : "/", wallet);
+}
+
+export function openActionLogTx(wallet: string, index: number) {
+  return openActionLogRoute(`/tx/${wallet}/${index}`, wallet);
 }

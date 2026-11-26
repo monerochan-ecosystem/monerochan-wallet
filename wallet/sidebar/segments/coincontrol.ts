@@ -1,15 +1,25 @@
 import {
+  canRebroadcastTx,
   convertBigIntAmount,
   convertAmountBigInt,
   parseAddress,
   type ParseAddressError,
   type ParsedAddress,
+  type ScanCacheOpened,
 } from "@spirobel/monero-wallet-api/unpacked";
 import { html, type MiniHtmlString } from "@spirobel/mininext";
 import {
   connectedToNode,
   currentlySelectedWallet,
 } from "./walletRoute";
+
+import { openActionLogTx } from "../../actionlog/open";
+import { sendFailureMessage } from "../../failedSend";
+
+const recoveryErrors = new Map<string, string>();
+const pendingRebroadcasts = new Map<string, { pa: string; row: ScanCacheOpened["failed_txs"][number] }>();
+const acceptedRebroadcasts = new Set<string>();
+const collapsedFailures = new Set<string>();
 
 type CoinOutputRow = {
   key: string;
@@ -306,6 +316,14 @@ function ccStyle() {
     .cc-modes .cc-btn:first-child { border-radius: 4px 0 0 4px; }
     .cc-modes .cc-btn:last-child { border-radius: 0 4px 4px 0; margin-left: -2px; }
     .cc-modes .cc-btn-on { z-index: 1; }
+    .failed-sends { margin-top: 12px; font-size: 14px; font-weight: normal; color: rgba(255, 255, 255, 0.85); overflow-wrap: anywhere; }
+    .failed-send { padding: 10px 0; border-top: 1px solid #888; }
+    .failed-sends p { margin: 6px 0; }
+    .failed-sends details { margin: 8px 0; }
+    .failed-sends summary { cursor: pointer; }
+    .failed-send-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .failed-send-heading .cc-btn { margin-top: 0; }
+    .failed-send-error { margin: 6px 0; }
     .cc-btn {
       box-shadow:
         inset 0 4px 12px rgba(0, 0, 0, 0.45),
@@ -329,6 +347,10 @@ function ccStyle() {
     .cc-btn:hover {
       color: white;
     }
+    .cc-rebroadcast { display: inline-grid; }
+    .cc-rebroadcast::before { content: "rebroadcast"; visibility: hidden; }
+    .cc-rebroadcast::before, .cc-rebroadcast span { grid-area: 1 / 1; }
+    .cc-rebroadcast:disabled { cursor: default; opacity: .65; }
     .cc-btn-on {
       color: white;
       border-color: rgba(255, 255, 255, 0.7);
@@ -401,6 +423,50 @@ function chooseMode(coinControl: boolean) {
   if (coinControlMode !== coinControl) toggleCoinControlMode();
 }
 
+function toggleFailedSends(event: Event) {
+  // the template owns the open attribute, not the browser
+  event.preventDefault();
+  const pa = currentlySelectedWallet()?.primary_address;
+  if (!pa) return;
+  if (collapsedFailures.has(pa)) collapsedFailures.delete(pa);
+  else collapsedFailures.add(pa);
+}
+async function rebroadcast(pa: string, row: ScanCacheOpened["failed_txs"][number]) {
+  const wallets = window.wallets;
+  const key = `${pa}:${row.index}`;
+  if (!wallets || pendingRebroadcasts.has(key)) return;
+  recoveryErrors.delete(key);
+  acceptedRebroadcasts.delete(pa);
+  pendingRebroadcasts.set(key, { pa, row });
+  try {
+    await wallets.rebroadcastTx({ primary_address: pa, tx_log_index: row.index });
+    const wallet = wallets.wallets.find((wallet) => wallet.primary_address === pa);
+    if (!wallet?.tx_logs[row.index]?.hidden_on_send_plate) acceptedRebroadcasts.add(pa);
+  } catch (error) {
+    recoveryErrors.set(key, String(error));
+  } finally {
+    pendingRebroadcasts.delete(key);
+  }
+}
+export function setSendError(pa: string, error?: unknown) {
+  const key = `${pa}:list`;
+  if (error === undefined) {
+    acceptedRebroadcasts.delete(pa);
+    recoveryErrors.delete(key);
+  } else recoveryErrors.set(key, String(error));
+}
+export async function dismissSendNotices(index?: number, pa = currentlySelectedWallet()?.primary_address): Promise<boolean> {
+  if (!pa) return false;
+  const key = `${pa}:list`;
+  recoveryErrors.delete(key);
+  try {
+    await window.wallets?.dismissSendPlate({ primary_address: pa, ...(index !== undefined ? { tx_log_index: index } : {}) });
+    if (index !== undefined) recoveryErrors.delete(`${pa}:${index}`);
+    else acceptedRebroadcasts.delete(pa);
+    return true;
+  } catch (error) { recoveryErrors.set(key, String(error)); return false; }
+}
+
 export function sendModeSelector(activeTool = false): MiniHtmlString {
   pruneCheckedInputs();
   if (activeTool) return html`<div hidden>${ccStyle()}</div>`;
@@ -427,6 +493,46 @@ function coinOutputFields(row: CoinOutputRow, number: number): MiniHtmlString {
 export function coinControlFields(): MiniHtmlString {
   if (!cc().rows.length) cc().rows = [freshOutputRow()];
   return coinOutputFields(cc().rows[0]!, 1);
+}
+
+export function failedSendView(): MiniHtmlString {
+  const wallet = currentlySelectedWallet();
+  const failed = wallet?.failed_txs.filter(({ txlog }) => !txlog.hidden_on_send_plate) ?? [];
+  const pa = wallet?.primary_address ?? "";
+  const listError = recoveryErrors.get(`${pa}:list`);
+  const errorNotice = listError ? html`<p role="alert">${sendFailureMessage(listError)}</p>` : "";
+  const acceptedNotice = acceptedRebroadcasts.has(pa) ? html`<p role="status">Node accepted the rebroadcast.</p>` : "";
+  if (!wallet) return html`<div>${errorNotice}</div>`;
+  // the first cache write clears the old error before the node answers.
+  for (const { pa: owner, row } of pendingRebroadcasts.values()) {
+    if (owner !== pa || wallet.tx_logs[row.index]?.hidden_on_send_plate) continue;
+    if (!failed.some(({ index }) => index === row.index)) failed.push(row);
+  }
+  if (!failed.length) return html`<div>${errorNotice}${acceptedNotice}</div>`;
+  const blocks = failed.sort((a, b) => b.index - a.index).map((row) => {
+    const key = `${wallet.primary_address}:${row.index}`;
+    const pending = pendingRebroadcasts.has(key);
+    const rawError = recoveryErrors.get(key) || row.txlog.error || row.txlog.sendResult?.reason || "send failed";
+    return html`<div class="failed-send" data-tx-log-index="${row.index}">
+      <div class="failed-send-heading"><time>${formatStamp(row.txlog.last_broadcast_at ?? row.txlog.timestamp)}</time>
+        <button type="button" class="cc-btn" id="cc-dismiss-${row.index}" onclick=${() => void dismissSendNotices(row.index, pa)}>dismiss</button>
+      </div>
+      <p class="failed-send-error">${sendFailureMessage(rawError)}</p>
+      <div>
+        ${pending || canRebroadcastTx(wallet.cache, row.index) ? html`<button type="button" class="cc-btn cc-rebroadcast" id="cc-re-${row.index}" disabled=${pending} onclick=${() => void rebroadcast(pa, row)}><span aria-live="polite">${pending ? "sending…" : "rebroadcast"}</span></button>` : ""}
+        <button type="button" class="cc-btn" id="cc-txlog-${row.index}" onclick=${() => void openActionLogTx(pa, row.index)}>txlog</button>
+      </div>
+    </div>`;
+  });
+  return html`<div class="failed-sends">
+    ${errorNotice}
+    ${acceptedNotice}
+    <details id="failed-sends" open=${!collapsedFailures.has(pa)}>
+      <summary id="toggle-failed-sends" onclick=${toggleFailedSends}>failed sends (${failed.length})</summary>
+      <p id="failed-send-warning">Check the transaction or checkout before paying again. Rebroadcast sends the same transaction.</p>
+      ${html`<div>${blocks}</div>`}
+    </details>
+  </div>`;
 }
 
 export function coinControlView(): MiniHtmlString {
@@ -461,31 +567,6 @@ export function coinControlView(): MiniHtmlString {
       ${previewLine("fee estimate:", cc().fee == null ? "..." : convertBigIntAmount(cc().fee!))}
     </div>` : index > 0 ? html`<button type="button" class="cc-btn" id="cc-rm-${row.key}" onclick=${() => removeOutput(row.key)}>remove</button>` : ""}
   </div>`);
-  const failed = currentlySelectedWallet()?.failed_txs ?? [];
-  const failedBlocks = failed.map((row) => {
-    const inputLines = row.inputs.map(
-      (input) =>
-        html`<div>
-          idx ${input.index_on_blockchain}
-          ${convertBigIntAmount(input.amount)}
-        </div>`,
-    );
-    return html`<div>
-      <div>${formatStamp(row.txlog.timestamp)}</div>
-      <div>${row.txlog.error || row.txlog.sendResult?.reason || "failed"}</div>
-      ${inputLines}
-      ${row.txlog.signed_tx
-        ? html`<span class="cc-btn" id="cc-re-${row.index}" onclick=${() => {
-            const pa = currentlySelectedWallet()?.primary_address;
-            if (!pa || !row.txlog.signed_tx) return;
-            void window.wallets?.rebroadcastTx({
-              primary_address: pa,
-              tx_log_index: row.index,
-            });
-          }}>rebroadcast</span>`
-        : ""}
-    </div>`;
-  });
   const list = selectInputOpen
     ? html`<div class="cc-list">
         ${inputs.length
@@ -510,6 +591,5 @@ export function coinControlView(): MiniHtmlString {
         >external sweep</span
       >
     </div>
-    ${failedBlocks}
   </div>`;
 }

@@ -14,11 +14,14 @@ import {
   coinControlSendReady,
   coinControlView,
   coinControlFields,
+  failedSendView,
+  dismissSendNotices,
   sendModeSelector,
   forceStandardMode,
   noteStandardDraft,
   resetCoinControl,
   selectedAmountLine,
+  setSendError,
   setSpendDismissHandler,
   submitCoinControl,
   takeReleasedDraft,
@@ -160,8 +163,9 @@ async function resetCallback() {
   if (pa) {
     sentUntil.delete(pa);
     const latest = latestLog(pa);
-    if (latest) dismissedStatus.set(pa, latest.timestamp);
-    await window.wallets?.dismissSendPlate({ primary_address: pa });
+    if (await dismissSendNotices(undefined, pa)) {
+      if (latest) dismissedStatus.set(pa, latest.timestamp);
+    }
   }
   readLastTxLog();
 }
@@ -420,6 +424,7 @@ export function sendPlateContent() {
       ${coinControlIsOn() ? "" : toolInfoSnippet}
       ${coinControlIsOn() ? "" : validitySnippet}
       ${coinControlView()}
+      ${failedSendView()}
     </div>
       <div class="tool-actions">
         ${executedHintMarkup()}
@@ -460,15 +465,14 @@ export function sendPlateContent() {
 export function sendPlate() {
   readLastTxLog();
   const sendButtonClass = walletUnlocked() ? "red-dot" : "grey-dot";
-  const dismissStatus = document.getElementById("dismissStatus");
-  if (dismissStatus && last_tx_log) {
-    const stamp = last_tx_log.timestamp;
-    dismissStatus.onclick = () => {
-      dismissedStatus.set(currentlySelectedWallet()?.primary_address ?? "", stamp);
-      const pa = currentlySelectedWallet()?.primary_address;
-      if (pa) void window.wallets?.dismissSendPlate({ primary_address: pa });
-    };
-  }
+  const stamp = last_tx_log?.timestamp;
+  const dismissStatus = () => {
+    const pa = currentlySelectedWallet()?.primary_address;
+    if (pa && stamp !== undefined)
+      void dismissSendNotices(undefined, pa).then((ok) => {
+        if (ok) dismissedStatus.set(pa, stamp);
+      });
+  };
 
   return html`<div class="plate">
     <style>
@@ -547,7 +551,11 @@ export function sendPlate() {
           ${sendButtonDotStyles}<span class="${sendButtonClass}"></span> SEND
         </span>`,
         sendButtonActive(),
-        sendCallback,
+        async () => {
+          const pa = routeKey();
+          setSendError(pa);
+          await sendCallback().catch((error) => setSendError(pa, error));
+        },
       )}
       <div></div>
       ${actionButton("reset-send", "RESET", true, resetCallback)}
@@ -555,7 +563,9 @@ export function sendPlate() {
         ${lastTxLogMessage
           ? html`<div class="status-line">
               <div class="${lastTxLogMessageClass}">${lastTxLogMessage}</div>
-              <span class="tool-action" id="dismissStatus">dismiss</span>
+              <span class="tool-action" id="dismissStatus" onclick=${dismissStatus}
+                >dismiss</span
+              >
             </div>`
           : ""}
       </div>
