@@ -39,7 +39,7 @@ import type {
 import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/unpacked";
 import { openActionLogPage, toggleActionLogPage } from "../../actionlog/open";
 import { formatTime, toolInfo, validityMessage } from "./toolInfo";
-import { sendStatus } from "../../failedSend";
+import { handoverRetryHint, sendStatus } from "../../failedSend";
 
 // the send plate is per wallet route. keep its state per route too.
 type SendDraft = {
@@ -224,23 +224,30 @@ function executedHintMarkup() {
   const wallet = currentlySelectedWallet()?.primary_address ?? "";
   const executedSpendId = executedHint.get(wallet);
   if (!executedSpendId) return "";
-  const dismissExecuted = document.getElementById("dismissExecuted");
-  if (dismissExecuted) {
-    dismissExecuted.onclick = () => {
-      executedHint.delete(wallet);
-    };
-  }
-  const visitExecuted = document.getElementById("visitExecuted");
-  if (visitExecuted) {
-    const visitId = executedSpendId;
-    visitExecuted.onclick = () => {
-      void openActionLogPage(visitId);
-    };
-  }
+  const log = window.wallets?.actionLogOpened;
+  const retryHint = handoverRetryHint(
+    log?.invocations().find((item) => item.invocationId === executedSpendId),
+    window.wallets?.wallets ?? [],
+  );
   return html`<div class="executed-hint">
-    tool call executed
-    <span class="tool-action" id="visitExecuted">visit</span>
-    <span class="tool-action" id="dismissExecuted">dismiss</span>
+    ${retryHint || "tool call executed"}
+    ${retryHint
+      ? html`<span class="tool-action" id="retryHandover" onclick=${() => void log?.execute(executedSpendId, { retryHandover: true })}>retry handover</span>`
+      : ""}
+    <span
+      class="tool-action"
+      id="visitExecuted"
+      onclick=${() => void openActionLogPage(executedSpendId)}
+      >visit</span
+    >
+    <span
+      class="tool-action"
+      id="dismissExecuted"
+      onclick=${() => {
+        executedHint.delete(wallet);
+      }}
+      >dismiss</span
+    >
   </div>`;
 }
 export function sendPlateContent() {

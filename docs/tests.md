@@ -19,6 +19,22 @@ bun test/browser-002.ts
 - Shop: `../monero-payment-links`, command `bun run production`, port 3003. Clone `https://github.com/monerochan-ecosystem/monero-payment-links.git` only when that sibling folder is missing.
 
 
+## Receipt before node acceptance
+
+Start `bun test/node-gate.ts` with an offline regtest node already on port 18081. The proxy prints its loopback URL and writes `testdata/node-gate/endpoint.json`. Start walletless checkout with `MONERO_NODE_URL` set to that URL, then run:
+
+```sh
+CHECKOUT_URL=http://127.0.0.1:3006/newsession \
+CHECKOUT_MODE=walletless \
+CHECKOUT_ROOT=/absolute/path/to/checkout-data \
+CHECKOUT_NODE_GATE=http://127.0.0.1:PRINTED_PORT \
+RUN_ID=received bun test/browser-001.ts
+```
+
+The test holds both the payer's submission and the merchant's submission before either reaches the node. It checks the saved receipt, identical signed bytes, and absence from the node. It captures `received-001.png`, releases both submissions, and checks mempool, confirming, and paid states. The proxy is test-only; restore the checkout's direct node URL and stop the owned proxy after the test.
+
+A custom `CHECKOUT_URL` does not start the unrelated payment-links shop. `CHECKOUT_ROOT` selects the directory containing the checkout database.
+
 ## Rules
 
 - Use the real side panel over CDP. Do not open `sidebar.html` as a tab. `Extensions.triggerAction` takes the tab target, not the page target. A second trigger closes an open panel.

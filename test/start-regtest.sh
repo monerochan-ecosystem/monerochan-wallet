@@ -61,25 +61,29 @@ else
   echo "node already up"
 fi
 
-if [ ! -d "$SHOP" ]; then
-  git clone https://github.com/monerochan-ecosystem/monero-payment-links.git "$SHOP"
-  (cd "$SHOP" && bun install)
-fi
-
-if ! curl -sf -m 2 http://127.0.0.1:3003/login >/dev/null; then
-  mkdir -p "$ROOT/testdata"
-  # setsid keeps the server after this script exits.
-  (
-    cd "$SHOP"
-    setsid bun run production >"$ROOT/testdata/payment-links.log" 2>&1 < /dev/null &
-  )
-  if ! wait_http http://127.0.0.1:3003/login 40; then
-    echo "payment links did not answer on port 3003" >&2
-    exit 1
-  fi
-  echo "payment links started"
+if [ -n "${CHECKOUT_URL:-}" ]; then
+  echo "checkout managed by the caller"
 else
-  echo "payment links already up"
+  if [ ! -d "$SHOP" ]; then
+    git clone https://github.com/monerochan-ecosystem/monero-payment-links.git "$SHOP"
+    (cd "$SHOP" && bun install)
+  fi
+
+  if ! curl -sf -m 2 http://127.0.0.1:3003/login >/dev/null; then
+    mkdir -p "$ROOT/testdata"
+    # setsid keeps the server after this script exits.
+    (
+      cd "$SHOP"
+      setsid bun run production >"$ROOT/testdata/payment-links.log" 2>&1 < /dev/null &
+    )
+    if ! wait_http http://127.0.0.1:3003/login 40; then
+      echo "payment links did not answer on port 3003" >&2
+      exit 1
+    fi
+    echo "payment links started"
+  else
+    echo "payment links already up"
+  fi
 fi
 
 if [ "${SKIP_BRAVE:-0}" = 1 ]; then

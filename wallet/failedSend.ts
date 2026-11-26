@@ -1,4 +1,4 @@
-import { canReleaseInputs, isInputLocked, txFailed, type ScanCache, type TxLog } from "@spirobel/monero-wallet-api/unpacked";
+import { canReleaseInputs, isInputLocked, txFailed, type InvocationState, type ScanCache, type TxLog } from "@spirobel/monero-wallet-api/unpacked";
 
 export const doubleSpendWarning = "A failed reply does not prove that a transaction was rejected. A new spend of the same input uses the same key image. An observer who sees both transactions can compare their rings. Different decoys can narrow or identify the real input. Your own node removes a remote RPC observer, but does not remove this risk if both transactions reach peers.";
 
@@ -25,11 +25,15 @@ export function sendFailureMessage(error: unknown): string {
   return "The wallet could not complete this request. Check this transaction before trying again.";
 }
 
-export function failedSendState(cache: ScanCache, index: number) {
+export function failedSendState(cache: ScanCache, index: number, events: readonly object[]) {
   const row = cache.tx_logs?.[index];
   const locked = !!row?.inputs_index.some((id) => cache.pending_spent_utxos?.[id] === index &&
     !cache.outputs[id]?.spent_in_tx_hash && isInputLocked(cache, id));
-  return { locked };
+  const handover = ([...events].reverse().find((event) => "handover" in event && event.handover) as { handover?: { ok?: boolean } } | undefined)?.handover;
+  const merchant = !handover ? "" : handover.ok
+    ? "The merchant node accepted this transaction."
+    : "The merchant node may have accepted this transaction.";
+  return { locked, merchant };
 }
 
 export function inputRecovery(cache: ScanCache, id: string) {
@@ -56,4 +60,20 @@ export function selfSpendInputs(cache: ScanCache, index: number): string[] {
     return output && !output.spent_in_tx_hash && typeof output.burned !== "number" &&
       (cache.pending_spent_utxos?.[id] === index || !isInputLocked(cache, id));
   }) ? inputs : [];
+}
+
+export function handoverRetryHint(
+  invocation: Pick<InvocationState, "toolId" | "valid" | "lastType" | "invocationId" | "wallet_to_send_from_pa" | "events"> | null | undefined,
+  wallets: readonly { primary_address: string; tx_logs: readonly Pick<TxLog, "invocationId" | "signed_tx">[] }[],
+): string {
+  if (invocation?.toolId !== "001" || invocation.valid !== "valid" || invocation.lastType !== "execute_result") return "";
+  const result = invocation.events.findLast((event) => event.type === "execute_result");
+  if (result?.ok !== false) return "";
+  const validation = invocation.events.findLast((event) => event.type === "validate_result");
+  const execution = invocation.events.find((event) => event.type === "execute_start");
+  if (!execution?.address || validation?.address !== execution.address ||
+    typeof validation.successUrl !== "string" || typeof validation.handoverUrl !== "string") return "";
+  const payer = wallets.find((wallet) => wallet.primary_address === invocation.wallet_to_send_from_pa);
+  if (!payer?.tx_logs.find((row) => row.invocationId === invocation.invocationId)?.signed_tx) return "";
+  return result.sent === true ? "transaction sent, merchant receipt unconfirmed" : "merchant receipt unconfirmed";
 }

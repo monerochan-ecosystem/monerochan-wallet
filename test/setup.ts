@@ -380,7 +380,7 @@ export async function pointShopsAtRegtest(origin?: string) {
 
 export async function ensureHealthyWallet(): Promise<string> {
   startNodeAndBrowser();
-  await pointShopsAtRegtest();
+  if (!process.env.CHECKOUT_URL) await pointShopsAtRegtest();
   await ensureSidePanel();
   await reviveSidebar();
   const h = await nodeHeight();

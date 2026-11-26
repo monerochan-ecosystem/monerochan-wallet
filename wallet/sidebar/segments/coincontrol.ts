@@ -15,7 +15,7 @@ import {
 } from "./walletRoute";
 
 import { openActionLogTx } from "../../actionlog/open";
-import { doubleSpendWarning, inputRecovery, selfSpendInputs, sendFailureMessage } from "../../failedSend";
+import { doubleSpendWarning, failedSendState, inputRecovery, selfSpendInputs, sendFailureMessage } from "../../failedSend";
 
 const recoveryErrors = new Map<string, string>();
 const pendingRebroadcasts = new Map<string, { pa: string; row: ScanCacheOpened["failed_txs"][number] }>();
@@ -556,6 +556,8 @@ export function failedSendView(): MiniHtmlString {
   }
   if (!failed.length) return html`<div>${errorNotice}${acceptedNotice}</div>`;
   const blocks = failed.sort((a, b) => b.index - a.index).map((row) => {
+    const events = window.wallets?.actionLogOpened?.invocations().find((item) => item.invocationId === row.txlog.invocationId)?.events ?? [];
+    const state = failedSendState(wallet.cache, row.index, events);
     const key = `${wallet.primary_address}:${row.index}`;
     const pending = pendingRebroadcasts.has(key);
     const rawError = recoveryErrors.get(key) || row.txlog.error || row.txlog.sendResult?.reason || "send failed";
@@ -564,6 +566,7 @@ export function failedSendView(): MiniHtmlString {
         <button type="button" class="cc-btn" id="cc-dismiss-${row.index}" onclick=${() => void dismissSendNotices(row.index, pa)}>dismiss</button>
       </div>
       <p class="failed-send-error">${sendFailureMessage(rawError)}</p>
+      ${state.merchant ? html`<p class="merchant-send-hint">${state.merchant}</p>` : ""}
       <div>
         ${pending || canRebroadcastTx(wallet.cache, row.index) ? html`<button type="button" class="cc-btn cc-rebroadcast" id="cc-re-${row.index}" disabled=${pending} onclick=${() => void rebroadcast(pa, row)}><span aria-live="polite">${pending ? "sending…" : "rebroadcast"}</span></button>` : ""}
         <button type="button" class="cc-btn" id="cc-txlog-${row.index}" onclick=${() => void openActionLogTx(pa, row.index)}>txlog</button>

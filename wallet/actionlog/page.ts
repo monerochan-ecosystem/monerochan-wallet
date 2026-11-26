@@ -11,7 +11,7 @@ import { html, type MiniHtmlString } from "@spirobel/mininext";
 import { actionLog, actionLogHeight, actionLogWallets, actionLogWalletsOpened } from "./init";
 import { router } from "./router";
 import { formatConfirmationEta, minedSpendHeight, txLogConfirmationEta } from "../sidebar/segments/toolInfo";
-import { doubleSpendWarning, failedSendState, selfSpendInputs, sendFailureMessage } from "../failedSend";
+import { doubleSpendWarning, failedSendState, handoverRetryHint, selfSpendInputs, sendFailureMessage } from "../failedSend";
 import { openSelfSpend } from "./open";
 
 export type LogWallet = {
@@ -94,7 +94,7 @@ function txLogs(): TxLogRow[] {
       return {
         wallet: wallet.primary_address,
         log: { ...log, index },
-        inputsReserved: txFailed(log) && failedSendState(cache, index).locked,
+        inputsReserved: txFailed(log) && failedSendState(cache, index, []).locked,
         minedHeight: minedSpendHeight(inputs),
       };
     });
@@ -670,6 +670,11 @@ function invoRows(head?: InvocationState | null): MiniHtmlString[] {
   if (!head) return [];
   const rows: MiniHtmlString[] = [];
   addInfoRow(rows, "error", head.error);
+  const handover = [...head.events].reverse().find((event) => event.handover)?.handover as { ok?: boolean; error?: string } | undefined;
+  if (handover) {
+    addInfoRow(rows, "merchant handover", handover.ok ? "done" : "failed");
+    addInfoRow(rows, "handover error", handover.error);
+  }
   addInfoRow(rows, "amount", head.amount);
   addInfoRow(rows, "address", head.address);
   addInfoRow(rows, "from", head.wallet_to_send_from_pa);
@@ -720,6 +725,8 @@ function detailPage(invocationId: string): MiniHtmlString {
     ) ?? null;
   const evs = head?.events ?? [];
   const status = head?.status ?? "";
+  const retryHint = handoverRetryHint(head, actionLogWallets());
+  const retry = () => void actionLog()?.execute(invocationId, { retryHandover: true });
 
   return html`<div class="log-page">
     ${styles}
@@ -731,6 +738,8 @@ function detailPage(invocationId: string): MiniHtmlString {
       tx ? html`<div class="log-jump" id="open-txlog" onclick=${() => openTxRow(tx)}>txlog</div>` : undefined,
     )}
     ${head?.toolId === "001" && tx ? txEtaLine(tx) : ""}
+    ${retryHint ? html`<div id="handover-hint">${retryHint}
+      <div class="log-jump" id="retry-handover" onclick=${retry}>retry handover</div></div>` : html`<span hidden></span>`}
     ${evs.length
       ? evs.map(eventLine)
       : html`<div class="log-empty">no events</div>`}

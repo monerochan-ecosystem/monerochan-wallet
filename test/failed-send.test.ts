@@ -1,10 +1,8 @@
 import { expect, spyOn, test } from "bun:test";
 import * as walletApi from "@spirobel/monero-wallet-api/unpacked";
 import * as failure from "../wallet/failedSend";
-
 const now = 1_800_000_000_000;
 function cache() { return { outputs: { "7": {} }, pending_spent_utxos: { "7": 0 }, tx_logs: [{ inputs_index: ["7"], error: "timeout", signed_tx: "same", last_broadcast_at: now }] } as any; }
-
 test("internal message-channel errors have a plain explanation without claiming the payment failed", () => {
   const raw = "Error: A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received";
   expect(failure.sendFailureMessage(raw)).toBe("The wallet connection was interrupted. Reopen the wallet and check this transaction.");
@@ -19,16 +17,19 @@ test("node and unknown errors do not expose internal exception text", () => {
 test("failed send holds its inputs until manual release", () => {
   const current = cache();
   current.tx_logs[0].last_broadcast_at = Date.now() - 600_000;
-  expect(failure.failedSendState(current, 0).locked).toBe(true);
+  expect(failure.failedSendState(current, 0, [])).toEqual({ locked: true, merchant: "" });
   current.tx_logs[0].inputs_unlocked = true;
-  expect(failure.failedSendState(current, 0).locked).toBe(false);
+  expect(failure.failedSendState(current, 0, [])).toEqual({ locked: false, merchant: "" });
 });
-
+test("a failed local send can still have an accepted or uncertain merchant submission", () => {
+  expect(failure.failedSendState(cache(), 0, [{ handover: { ok: true } }]).merchant).toContain("accepted");
+  expect(failure.failedSendState(cache(), 0, [{ handover: { ok: false } }]).merchant).toContain("may have accepted");
+});
 test("manual unlock is not offered for inputs reserved by a newer transaction or seen spent", () => {
   const current = cache(); current.pending_spent_utxos["7"] = 1;
-  expect(failure.failedSendState(current, 0).locked).toBe(false);
+  expect(failure.failedSendState(current, 0, []).locked).toBe(false);
   current.pending_spent_utxos["7"] = 0; current.outputs["7"].spent_in_tx_hash = "mined";
-  expect(failure.failedSendState(current, 0).locked).toBe(false);
+  expect(failure.failedSendState(current, 0, []).locked).toBe(false);
 });
 
 test("input recovery follows the current reservation and keeps a link after release", () => {
@@ -117,6 +118,32 @@ test("the warning does not promise that a local node hides conflicting transacti
   expect(failure.doubleSpendWarning).toContain("key image");
   expect(failure.doubleSpendWarning).toContain("real input");
   expect(failure.doubleSpendWarning).toContain("peers");
+});
+test("handover retry requires verified merchant links and the matching signed transaction", () => {
+  const base = { id: "e", timestamp: "2026-11-25T00:00:00Z", invocationId: "call", toolId: "001" } as const;
+  const validation = {
+    ...base, type: "validate_result", stage: "validated", address: "payee",
+    successUrl: "https://merchant.test/receipt", handoverUrl: "https://merchant.test/handover",
+  } as const;
+  const execute = { ...base, type: "execute_start", stage: "executed", address: "payee" } as const;
+  const failed = { ...base, type: "execute_result", stage: "executed", ok: false, sent: false } as const;
+  const call = {
+    ...base, valid: "valid" as const, lastType: "execute_result" as const, wallet_to_send_from_pa: "payer",
+    events: [validation, execute, failed],
+  };
+  const payer = { primary_address: "payer", tx_logs: [{ invocationId: "call", signed_tx: "signed" }] };
+  expect(failure.handoverRetryHint(call, [payer])).toBe("merchant receipt unconfirmed");
+
+  const sent = { ...call, events: [validation, execute, { ...failed, sent: true }] };
+  expect(failure.handoverRetryHint(sent, [payer])).toBe("transaction sent, merchant receipt unconfirmed");
+
+  expect(failure.handoverRetryHint(call, [{ ...payer, tx_logs: [{ invocationId: "call" }] }])).toBe("");
+  expect(failure.handoverRetryHint(call, [{ ...payer, tx_logs: [{ invocationId: "other", signed_tx: "signed" }] }])).toBe("");
+  expect(failure.handoverRetryHint(call, [{ ...payer, primary_address: "other" }])).toBe("");
+  expect(failure.handoverRetryHint({ ...call, events: [execute, failed] }, [payer])).toBe("");
+  expect(failure.handoverRetryHint({ ...call, lastType: "dismiss" }, [payer])).toBe("");
+  expect(failure.handoverRetryHint({ ...call, events: [validation, { ...execute, address: "other" }, failed] }, [payer])).toBe("");
+  expect(failure.handoverRetryHint({ ...call, events: [...call.events, { ...failed, ok: true }] }, [payer])).toBe("");
 });
 
 test("send status follows the saved broadcast attempt and either node's acceptance", () => {
