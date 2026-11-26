@@ -126,7 +126,8 @@ async function diskLog(wallet: TestRouteWallet) {
 // the panel keeps its in-memory view mode between runs
 async function ensureStandardForm() {
   if (await read(`!!document.getElementById("amountInput")`)) return;
-  await read(`document.getElementById("openCoinControlButton")?.onclick?.()`);
+  // the mode group: "standard" leaves coin control, "coin control" only opens it
+  await read(`document.getElementById("send-mode-standard")?.click()`);
   await wait("standard send form", () => read(`!!document.getElementById("amountInput")`), Boolean);
 }
 async function shot(name: string) {
