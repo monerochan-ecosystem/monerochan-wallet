@@ -1,5 +1,6 @@
 import {
   canRebroadcastTx,
+  canReleaseInputs,
   getToolUiByPermissions,
   txFailed,
   type ActionLogEvent,
@@ -10,7 +11,7 @@ import { html, type MiniHtmlString } from "@spirobel/mininext";
 import { actionLog, actionLogHeight, actionLogWallets, actionLogWalletsOpened } from "./init";
 import { router } from "./router";
 import { formatConfirmationEta, minedSpendHeight, txLogConfirmationEta } from "../sidebar/segments/toolInfo";
-import { sendFailureMessage } from "../failedSend";
+import { doubleSpendWarning, failedSendState, sendFailureMessage } from "../failedSend";
 
 export type LogWallet = {
   primary_address: string;
@@ -67,12 +68,15 @@ const PAGE_SIZE = 5;
 type TxLogRow = {
   wallet: string;
   log: TxLog & { index: number };
+  inputsReserved: boolean;
   minedHeight?: number;
 };
 
 let txlogRecovery: {
   key: string;
   open: boolean;
+  confirm: boolean;
+  pending: boolean;
   error: string;
   rebroadcast?: "pending" | "submitted";
 } | undefined;
@@ -89,6 +93,7 @@ function txLogs(): TxLogRow[] {
       return {
         wallet: wallet.primary_address,
         log: { ...log, index },
+        inputsReserved: txFailed(log) && failedSendState(cache, index).locked,
         minedHeight: minedSpendHeight(inputs),
       };
     });
@@ -197,7 +202,7 @@ const styles = html`<style>
   .log-rebroadcast { display: inline-grid; }
   .log-rebroadcast::before { content: "rebroadcast"; visibility: hidden; }
   .log-rebroadcast::before, .log-rebroadcast span { grid-area: 1 / 1; }
-  .log-recovery p { margin-top: 8px; }
+  .log-recovery p, .log-recovery details { margin-top: 8px; }
   .log-row {
     border: 2px solid rgba(255, 255, 255, 0.2);
     border-radius: 4px;
@@ -394,6 +399,7 @@ function txlogItem(row: TxLogRow) {
   return html`<div class="log-row" id="${id}" onclick=${() => openTxRow(row)}>
     <div class="log-status">${txStatus(log)}</div>
     <div>${formatTime(log.timestamp)}</div>
+    ${row.inputsReserved ? html`<div class="log-meta">inputs reserved</div>` : ""}
     <div class="log-meta">
       ${log.error ?? ""} ${payments}
       ${log.inputs_index?.length
@@ -736,32 +742,45 @@ function txRecoveryActions(row: TxLogRow) {
   if (!wallets) return "";
   const wallet = wallets.wallets.find((wallet) => wallet.primary_address === row.wallet);
   if (!wallet) return "";
+  const canRelease = canReleaseInputs(wallet.cache, row.log.index);
   const canRebroadcast = canRebroadcastTx(wallet.cache, row.log.index);
 
   const key = `${row.wallet}:${row.log.index}`;
-  if (txlogRecovery?.key !== key) txlogRecovery = { key, open: txFailed(row.log), error: "" };
+  if (txlogRecovery?.key !== key) txlogRecovery = { key, open: txFailed(row.log), confirm: false, pending: false, error: "" };
   const state = txlogRecovery;
   const showRebroadcast = canRebroadcast || state.rebroadcast;
-  if (!showRebroadcast && !state.error) return "";
-  const pending = state.rebroadcast === "pending";
-  const rebroadcastLabel = pending ? "sending…" : state.rebroadcast ?? "rebroadcast";
-
-  const rebroadcast = async () => {
-    if (state.rebroadcast === "pending") return;
+  if (!canRelease && !showRebroadcast && !state.error) return "";
+  const rebroadcastLabel = state.rebroadcast === "pending" ? "sending…" : state.rebroadcast ?? "rebroadcast";
+  const params = { primary_address: row.wallet, tx_log_index: row.log.index };
+  async function recover(action: () => Promise<unknown>, rebroadcast = false) {
+    if (state.pending) return;
+    state.pending = true;
     state.error = "";
-    state.rebroadcast = "pending";
+    state.rebroadcast = rebroadcast ? "pending" : undefined;
     try {
-      await wallets.rebroadcastTx({ primary_address: row.wallet, tx_log_index: row.log.index });
-      state.rebroadcast = "submitted";
+      await action();
+      state.confirm = false;
+      if (rebroadcast) state.rebroadcast = "submitted";
     } catch (error) {
       state.error = sendFailureMessage(error);
       state.rebroadcast = undefined;
+    } finally {
+      state.pending = false;
     }
-  };
+  }
 
   return html`<details class="log-recovery" id="txlog-actions" open=${state.open}>
     <summary onclick=${(event: Event) => { event.preventDefault(); state.open = !state.open; }}>actions</summary>
-    ${showRebroadcast ? html`<button type="button" class="log-jump log-rebroadcast" id="txlog-rebroadcast" disabled=${pending || !canRebroadcast} onclick=${rebroadcast}><span aria-live="polite">${rebroadcastLabel}</span></button>` : ""}
+    ${canRelease ? html`<p>The inputs for this transaction are reserved.</p>` : ""}
+    ${showRebroadcast ? html`<button type="button" class="log-jump log-rebroadcast" id="txlog-rebroadcast" disabled=${state.pending || !canRebroadcast} onclick=${() => void recover(() => wallets.rebroadcastTx(params), true)}><span aria-live="polite">${rebroadcastLabel}</span></button>` : ""}
+    ${canRelease && !state.confirm ? html`<button type="button" class="log-jump" id="txlog-free-inputs" disabled=${state.pending} onclick=${() => { state.confirm = true; }}>free inputs</button>` : ""}
+    ${canRelease && state.confirm ? html`<div id="txlog-release-confirmation">
+      <p>The original transaction can still be accepted after you free its inputs.</p>
+      <details><summary>why a new spend can affect privacy</summary><p>${doubleSpendWarning}</p></details>
+      <button type="button" class="log-jump" id="txlog-confirm-release" disabled=${state.pending} onclick=${() => void recover(() => wallets.releaseInputs(params))}>confirm</button>
+      <button type="button" class="log-jump" id="txlog-cancel-release" disabled=${state.pending} onclick=${() => { state.confirm = false; }}>cancel</button>
+    </div>` : ""}
+    ${row.log.inputs_unlocked ? html`<p>inputs released</p>` : ""}
     ${state.error ? html`<p role="alert">${state.error}</p>` : ""}
   </details>`;
 }

@@ -2,6 +2,7 @@ import {
   canRebroadcastTx,
   convertBigIntAmount,
   convertAmountBigInt,
+  isInputLocked,
   parseAddress,
   type ParseAddressError,
   type ParsedAddress,
@@ -14,7 +15,7 @@ import {
 } from "./walletRoute";
 
 import { openActionLogTx } from "../../actionlog/open";
-import { sendFailureMessage } from "../../failedSend";
+import { doubleSpendWarning, inputRecovery, sendFailureMessage } from "../../failedSend";
 
 const recoveryErrors = new Map<string, string>();
 const pendingRebroadcasts = new Map<string, { pa: string; row: ScanCacheOpened["failed_txs"][number] }>();
@@ -44,10 +45,10 @@ type CoinControlState = {
   rows: CoinOutputRow[];
   sweep: boolean;
   fee: bigint | null;
+  release?: { inputId: string; index: number; pending: boolean; error?: string };
 };
 const ccByRoute = new Map<string, CoinControlState>();
-function cc(): CoinControlState {
-  const key = currentlySelectedWallet()?.primary_address ?? "";
+function cc(key = currentlySelectedWallet()?.primary_address ?? ""): CoinControlState {
   let row = ccByRoute.get(key);
   if (!row)
     ccByRoute.set(key, (row = { rows: [], sweep: false, fee: null }));
@@ -91,6 +92,7 @@ export function resetCoinControl() {
   checkedInputIds.clear();
   cc().sweep = false;
   cc().fee = null;
+  delete cc().release;
   selectInputOpen = false;
   cc().rows = [];
 }
@@ -370,6 +372,10 @@ function ccStyle() {
       font-weight: 700;
       margin-top: 6px;
     }
+    .cc-input-info { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+    .cc-input-info .cc-btn { margin: 0; }
+    .cc-input-release { color: #eee; margin: 8px 12px 8px 0; }
+    .cc-input-release p { margin: 6px 0; }
     .cc-check {
       appearance: none;
       width: 18px;
@@ -535,21 +541,69 @@ export function failedSendView(): MiniHtmlString {
   </div>`;
 }
 
+function inputReleaseConfirmation(wallet: ScanCacheOpened) {
+  const state = cc(wallet.primary_address);
+  const release = state.release;
+  if (!release) return "";
+  async function confirm() {
+    if (!release || release.pending) return;
+    const current = inputRecovery(wallet.cache, release.inputId);
+    if (!current?.locked || current.index !== release.index) {
+      delete state.release;
+      return;
+    }
+    release.pending = true;
+    release.error = undefined;
+    try {
+      await window.wallets!.releaseInputs({ primary_address: wallet.primary_address, tx_log_index: release.index });
+      if (state.release === release) delete state.release;
+    } catch (error) {
+      release.error = sendFailureMessage(error);
+    } finally {
+      release.pending = false;
+    }
+  }
+  return html`<div class="cc-input-release" role="group" aria-label="release reserved inputs">
+    <p>Release all inputs reserved by this transaction? The original transaction can still be accepted.</p>
+    <details><summary>why a new spend can affect privacy</summary><p>${doubleSpendWarning}</p></details>
+    <button type="button" class="cc-btn" id="cc-confirm-release" disabled=${release.pending} onclick=${confirm}>release inputs</button>
+    <button type="button" class="cc-btn" id="cc-cancel-release" disabled=${release.pending} onclick=${() => { delete state.release; }}>cancel</button>
+    ${release.error ? html`<p role="alert">${release.error}</p>` : ""}
+  </div>`;
+}
+
 export function coinControlView(): MiniHtmlString {
   if (!coinControlMode) return html`<div hidden></div>`;
-  const inputs = currentlySelectedWallet()?.spendableInputs() ?? [];
+  const wallet = currentlySelectedWallet();
+  const reservedIds = wallet && selectInputOpen
+    ? Object.keys(wallet.cache.pending_spent_utxos ?? {}).filter((id) =>
+        isInputLocked(wallet.cache, id) && inputRecovery(wallet.cache, id)?.locked)
+    : [];
+  const reserved = reservedIds.flatMap((id) => {
+    const output = wallet?.cache.outputs[id];
+    return output ? [output] : [];
+  });
+  const inputs = [...(wallet?.spendableInputs() ?? []), ...reserved];
   const inputRows = inputs.map((input) => {
     const id = String(input.index_on_blockchain);
+    const selected = checkedInputIds.has(id);
+    const recovery = wallet && (selected || isInputLocked(wallet.cache, id)) ? inputRecovery(wallet.cache, id) : undefined;
     return html`<div class="cc-line">
       <input
         class="cc-check"
         type="checkbox"
         id="cc-in-${id}"
-        checked=${checkedInputIds.has(id)}
+        checked=${selected}
+        disabled=${!!recovery?.locked}
         onchange=${(e: Event) => toggleInputSelection(id, e)}
       />
       <label class="cc-amt" for="cc-in-${id}">${convertBigIntAmount(input.amount)}</label>
-      <label for="cc-in-${id}">${id}</label>
+      <div class="cc-input-info">
+        <label for="cc-in-${id}">${id}</label>
+        ${recovery?.locked && wallet ? html`<button type="button" class="cc-btn" id="cc-release-${id}" aria-label="release input ${id}" disabled=${!!cc().release?.pending} onclick=${() => {
+          cc(wallet.primary_address).release = { inputId: id, index: recovery.index, pending: false };
+        }}>release</button>` : recovery && wallet ? html`<span>released</span><button type="button" class="cc-btn" id="cc-input-txlog-${id}" aria-label="visit TxLog for released input ${id}" onclick=${() => void openActionLogTx(wallet.primary_address, recovery.index)}>txlog</button>` : ""}
+      </div>
     </div>`;
   });
   const outSum = extraOutputSum();
@@ -585,6 +639,7 @@ export function coinControlView(): MiniHtmlString {
   const rows = outputBlocks.length ? html`<div>${outputBlocks}</div>` : "";
   return html`<div>
     ${list}
+    ${selectInputOpen && wallet ? inputReleaseConfirmation(wallet) : ""}
     ${rows}
     <div>
       <span class="cc-btn ${cc().sweep ? "cc-btn-on" : ""}" id="cc-sweep" onclick=${toggleSweep}
