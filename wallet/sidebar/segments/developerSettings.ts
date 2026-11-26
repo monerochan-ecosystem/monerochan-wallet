@@ -109,7 +109,8 @@ let wipeWalletValue = "";
 async function wipeWalletCallback(event: Event) {
   wipeWalletValue = (event.target as HTMLInputElement).value;
   if (wipeWalletValue === "DELETE ALL FILES") {
-    void window.wallets?.stopWorker();
+    // stop the background worker before the files go. the wipe goes on when the background does not answer.
+    await window.wallets?.stopWorker().catch(() => {});
     await deleteAllfiles();
     router.navigate("/onboarding");
     location.reload();

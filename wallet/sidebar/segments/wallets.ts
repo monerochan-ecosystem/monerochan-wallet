@@ -61,7 +61,7 @@ async function removeWalletRouteHandler() {
       },
     });
     await initWallets();
-    void window.wallets?.buildWallets();
+    await window.wallets?.buildWallets();
     removeRouteInput = "";
     navigateToFirstWallet();
   } else {
