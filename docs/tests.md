@@ -35,6 +35,25 @@ The test holds both the payer's submission and the merchant's submission before 
 
 A custom `CHECKOUT_URL` does not start the unrelated payment-links shop. `CHECKOUT_ROOT` selects the directory containing the checkout database.
 
+## Failed-send recovery checks
+
+Run the Bun tests with `bun test test/*.test.ts`. The live local node check uses the offline Regtest node on port 18081. In the SDK, use only the unit folders:
+
+```sh
+bun run build && bun test $(find tests -path '*unit*' -name '*.test.ts' | sort)
+```
+
+Do not run the SDK acceptance folder for this work; some tests contact a real network node.
+
+These separate ad hoc CDP checks use the already running, owned test browser:
+
+- `bun test/browser-send-controls.ts`: no payment. Checks the merged selector below the input fields in both modes, its shared button style, and the Send plate layout. Set `CHECK_TOOL_PLATE=1` to check that a real 001 info plate has no mode selector or output label and does not overlap its fields or actions.
+- `bun test/browser-coin-control.ts`: no payment. Compares selected-mode styling exactly with selected input, edits three labelled outputs, removes the middle output, and checks that the other values stay in place. Also checks input selection, narrow layout, and sweep enter/exit: one destination, no amount or stale add-output button, and normal controls restored afterward. Checks that switching back to Standard restores the first output and that input survives rendering. Screenshots and JSON evidence are under `testdata/coin-control/`.
+- `bun test/browser-direct-tool.ts`: no payment. Checks the Tool 001 confirmation flow and that the Send plate fills and locks both payment fields. Uses an initialized test profile.
+- `bun test/browser-failed-send.ts`: requires a funded wallet on offline local regtest at port 18081. Uses trusted clicks and holds back payer submission with a simulated timeout. Checks both send modes, same-byte rebroadcast, merchant acceptance despite payer failure, and an old backend without handover. Checks that Reset clears the notices and that the reserved inputs can still be found and freed from Action Log → txlog. It first mines pending transactions from earlier local runs and waits for the scan. It records IndexedDB cache writes and checks that the coordinator writes them. Debug hooks are restored afterward.
+
+Screenshots and JSON evidence have UTC timestamps under `testdata/send-controls/` and `testdata/send-lock-review/`. The browser's visible transaction times use local time.
+
 ## Rules
 
 - Use the real side panel over CDP. Do not open `sidebar.html` as a tab. `Extensions.triggerAction` takes the tab target, not the page target. A second trigger closes an open panel.

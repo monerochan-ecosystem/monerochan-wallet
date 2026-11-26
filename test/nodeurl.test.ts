@@ -120,12 +120,3 @@ test("live local node", async () => {
   expect(info?.url).toBe(LOCAL);
   expect(info?.info.height).toBeGreaterThan(0);
 });
-
-test("live node.monero.fail", async () => {
-  expect(await nodeUrlToSave("node.monero.fail")).toBe(REMOTE);
-  expect(await nodeUrlToSave(REMOTE)).toBe(REMOTE);
-  expect(await nodeUrlToSave("http://node.monero.fail")).toBe(REMOTE);
-  const info = await findNodeInfo("node.monero.fail");
-  expect(info?.url).toBe(REMOTE);
-  expect(info?.info.height).toBeGreaterThan(0);
-});

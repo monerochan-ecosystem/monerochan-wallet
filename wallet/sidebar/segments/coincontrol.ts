@@ -402,6 +402,7 @@ function ccStyle() {
     .cc-line {
       display: grid;
       grid-template-columns: 22px max-content minmax(0, 1fr);
+      align-items: center;
       gap: 8px;
       align-items: center;
       font-size: 14px;
@@ -464,7 +465,6 @@ function addOutput() {
 function chooseMode(coinControl: boolean) {
   if (coinControlMode !== coinControl) toggleCoinControlMode();
 }
-
 function toggleFailedSends(event: Event) {
   // the template owns the open attribute, not the browser
   event.preventDefault();

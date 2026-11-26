@@ -39,7 +39,9 @@ const merchant = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(req) {
 origin = `http://127.0.0.1:${merchant.port}`;
 let failPayer = true;
 const submitted: string[] = [];
+const attached: { sessionId: string; targetInfo: { type: string; targetId: string } }[] = [];
 const c = await cdp(async (event) => {
+  if (event.method === "Target.attachedToTarget") { attached.push(event.params); return; }
   if (event.method !== "Fetch.requestPaused") return;
   submitted.push(JSON.parse(event.params.request.postData).tx_as_hex);
   await c.send(failPayer ? "Fetch.failRequest" : "Fetch.continueRequest", { requestId: event.params.requestId, ...(failPayer ? { errorReason: "TimedOut" } : {}) }, event.sessionId);
@@ -47,10 +49,18 @@ const c = await cdp(async (event) => {
 let bg = "";
 const tabs: string[] = [];
 const results: any[] = [];
+const audits: { type: string; sessionId: string; targetId: string }[] = [];
 try {
   const panel = await targetByUrl("sidebar.html");
   const panelSession = (await c.send("Target.attachToTarget", { targetId: panel.id, flatten: true })).sessionId;
   bg = (await c.send("Target.attachToTarget", { targetId: (await targetByUrl("background.html")).id, flatten: true })).sessionId;
+  // worker sessions must be attached through their owning offscreen document.
+  await c.send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: false, flatten: true }, bg);
+  await Bun.sleep(200);
+  for (const { sessionId, targetInfo: target } of [...new Map(attached.map((entry) => [entry.targetInfo.targetId, entry])).values()]) {
+    const installed = await c.send("Runtime.evaluate", { expression: `(()=>{if(typeof IDBObjectStore==="undefined")return false;globalThis.__cacheWrites=[];globalThis.__cachePut=IDBObjectStore.prototype.put;IDBObjectStore.prototype.put=function(value,key){if(this.name==="files"&&String(key).endsWith("_cache.json"))globalThis.__cacheWrites.push({key,stack:new Error().stack,at:Date.now()});return globalThis.__cachePut.call(this,value,key)};return true})()`, returnByValue: true }, sessionId);
+    if (installed.result?.value) audits.push({ type: target.type, sessionId, targetId: target.targetId });
+  }
   await c.send("Fetch.enable", { patterns: [{ urlPattern: node + "/send_raw_transaction", requestStage: "Request" }] }, bg);
   async function evaluate(expression: string, session = panelSession) {
     const response = await c.send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true }, session);
@@ -124,6 +134,11 @@ try {
     } finally {
       await evaluate('(()=>{const rt=(globalThis.browser||globalThis.chrome).runtime;if(window.__recoverySendMessage){rt.sendMessage=window.__recoverySendMessage;delete window.__recoverySendMessage}})()');
     }
+    await click("toggle-failed-sends");
+    await Bun.sleep(1200);
+    if (await evaluate('document.getElementById("failed-sends").open')) throw Error("the collapsed list reopened after rendering");
+    await shot("08-collapsed-failures");
+    await click("toggle-failed-sends");
     await click("openCoinControlButton");
     await shot("02-failed-coin-control");
     await click("send-mode-standard");
@@ -172,12 +187,22 @@ try {
     await c.send("Target.closeTarget", { targetId: log.id });
     await shot("04c-notice-cleared-after-release");
   }
+  const writes = [];
+  for (const audit of audits) {
+    const observed = await c.send("Runtime.evaluate", { expression: "globalThis.__cacheWrites", returnByValue: true }, audit.sessionId);
+    writes.push({ ...audit, cacheWrites: observed.result?.value || [] });
+  }
+  await Bun.write(`${directory}/cache-writes.json`, JSON.stringify(writes, null, 2));
+  if (writes.some((row) => row.type !== "worker" && row.cacheWrites.length)) throw Error("cache written outside a coordinator worker");
+  const active = writes.filter((row) => row.cacheWrites.length);
+  if (active.length !== 1 || active[0].cacheWrites.some((write: any) => !write.stack.includes("coordinatorMainMultithreaded"))) throw Error("cache write ownership was not verified");
   await Bun.write(`${directory}/results.json`, JSON.stringify({ timestamp: new Date().toISOString(), results, posts, payerRequests: submitted.length }, null, 2));
-  console.log("PASS timeout, both modes, same-byte rebroadcast, unlock, plain errors, merchant acceptance, legacy backend", directory);
+  console.log("PASS timeout, both modes, same-byte rebroadcast, unlock, plain errors, collapse, merchant acceptance, legacy backend", directory);
 } catch (error) {
   await Bun.write(`${directory}/failure.json`, JSON.stringify({ error: String(error), results, posts, payerRequests: submitted.length }, null, 2));
   throw error;
 } finally {
+  for (const audit of audits) await c.send("Runtime.evaluate", { expression: "if(globalThis.__cachePut){IDBObjectStore.prototype.put=globalThis.__cachePut;delete globalThis.__cachePut;delete globalThis.__cacheWrites}" }, audit.sessionId).catch(() => {});
   if (bg) await c.send("Fetch.disable", {}, bg).catch(() => {});
   for (const targetId of tabs) await c.send("Target.closeTarget", { targetId }).catch(() => {});
   c.ws.close(); merchant.stop(true);

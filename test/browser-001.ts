@@ -124,6 +124,7 @@ await openCheckout();
   if (!shown) throw new Error("unverified info message missing");
   const btn = await panel(`!!document.getElementById("dismissInfo")`);
   if (btn === true) throw new Error("dismiss button still next to the info message");
+  await shotTarget((await targetByUrl("sidebar.html")).id, "unverified-link");
   console.log("info message: unverified, no dismiss");
   await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of al.getActiveByPermissions(["spend"])) al.dismiss(x.invocationId); return 1; })()`);
 }
@@ -169,6 +170,7 @@ await openCheckout();
   if (!shown) throw new Error("shadow link did not open the unverified info message");
   const btn = await panel(`!!document.getElementById("dismissInfo")`);
   if (btn === true) throw new Error("dismiss button still next to the shadow info message");
+  await shotTarget((await targetByUrl("sidebar.html")).id, "unverified-shadow-link");
   console.log("shadow link: unverified, no dismiss");
   await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of al.getActiveByPermissions(["spend"])) al.dismiss(x.invocationId); return 1; })()`);
 }
