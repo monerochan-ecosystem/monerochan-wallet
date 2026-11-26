@@ -73,14 +73,7 @@ type TxLogRow = {
   minedHeight?: number;
 };
 
-let txlogRecovery: {
-  key: string;
-  open: boolean;
-  confirm: boolean;
-  pending: boolean;
-  error: string;
-  rebroadcast?: "pending" | "submitted";
-} | undefined;
+let txlogRecovery: { key: string; open: boolean; confirm: boolean; pending: boolean; error: string; rebroadcast?: "pending" | "submitted" } | undefined;
 
 function txLogs(): TxLogRow[] {
   return actionLogWallets().flatMap((wallet) => {
@@ -236,6 +229,7 @@ const styles = html`<style>
     user-select: none;
     color: rgba(255, 255, 255, 0.5);
   }
+  .log-events > summary { cursor: pointer; }
   .log-event {
     font-size: 13px;
     margin-top: 6px;
@@ -425,33 +419,29 @@ function txlogItem(row: TxLogRow) {
 }
 
 function walletDropdown(): MiniHtmlString {
-  const select = document.getElementById("log-wallet") as HTMLSelectElement | null;
-  if (select) {
-    const options = walletFilterOptions(actionLogWallets());
-    // Set native options directly. The renderer uses spans for dynamic text.
-    if (
-      select.options.length !== options.length ||
-      options.some((option, index) =>
-        select.options[index]?.value !== option.value ||
-        select.options[index]?.text !== option.label,
-      )
-    ) {
-      select.replaceChildren(
-        ...options.map((option) => new Option(option.label, option.value)),
-      );
-    }
-    if (select.value !== walletFilter) select.value = walletFilter;
-    select.title = select.selectedOptions[0]?.text ?? "";
-    select.onfocus = () => {
+  const options = walletFilterOptions(actionLogWallets());
+  const chosen = options.find((option) => option.value === walletFilter);
+  return html`<select
+    class="log-wallet-filter"
+    id="log-wallet"
+    aria-label="wallet"
+    title="${chosen?.label ?? ""}"
+    onfocus=${() => {
       pageInputFocused = false;
-    };
-    select.onchange = () => {
-      walletFilter = select.value;
+    }}
+    onchange=${(ev: Event) => {
+      walletFilter = (ev.currentTarget as HTMLSelectElement).value;
       logPage = 1;
       pageInputFocused = false;
-    };
-  }
-  return html`<select class="log-wallet-filter" id="log-wallet" aria-label="wallet"></select>`;
+    }}
+  >
+    ${options.map(
+      (option) =>
+        html`<option value="${option.value}" selected=${option.value === walletFilter}>
+          ${option.label}
+        </option>`,
+    )}
+  </select>`;
 }
 
 function chooseTab(tab: LogTab) {
@@ -459,25 +449,48 @@ function chooseTab(tab: LogTab) {
   logTab = tab;
   logPage = 1;
 }
-
-function attachListHandlers(pages: number) {
-  const tabs: LogTab[] = ["history", "success", "discarded"];
-  for (const tab of tabs) {
-    const el = document.getElementById(`log-tab-${tab}`);
-    if (el) el.onclick = () => chooseTab(tab);
+function turnPage(page: number) {
+  pageInputFocused = false;
+  logPage = page;
+}
+function typePage(ev: Event, pages: number) {
+  const n = parseInt((ev.currentTarget as HTMLInputElement).value, 10);
+  if (!Number.isFinite(n)) return;
+  logPage = Math.min(pages, Math.max(1, n));
+}
+// two arrow presses at the edge of the page field leave it, so the arrows turn pages again
+function pageFieldKeys(ev: KeyboardEvent) {
+  const input = ev.currentTarget as HTMLInputElement;
+  if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") {
+    edgeLeftCount = 0;
+    edgeRightCount = 0;
+    return;
   }
-  const prev = document.getElementById("log-prev");
-  if (prev)
-    prev.onclick = () => {
+  const pos = input.selectionStart ?? 0;
+  const collapsed = pos === (input.selectionEnd ?? 0);
+  if (ev.key === "ArrowLeft" && collapsed && pos <= 0) {
+    edgeLeftCount += 1;
+    edgeRightCount = 0;
+    if (edgeLeftCount >= 2) {
+      edgeLeftCount = 0;
       pageInputFocused = false;
-      logPage = Math.max(1, logPage - 1);
-    };
-  const next = document.getElementById("log-next");
-  if (next)
-    next.onclick = () => {
+      input.blur();
+    }
+  } else if (ev.key === "ArrowRight" && collapsed && pos >= input.value.length) {
+    edgeRightCount += 1;
+    edgeLeftCount = 0;
+    if (edgeRightCount >= 2) {
+      edgeRightCount = 0;
       pageInputFocused = false;
-      logPage = Math.min(pages, logPage + 1);
-    };
+      input.blur();
+    }
+  } else {
+    edgeLeftCount = 0;
+    edgeRightCount = 0;
+  }
+}
+
+function listKeys(pages: number) {
   document.onkeydown = (ev) => {
     const tag = (ev.target as HTMLElement | null)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -502,53 +515,11 @@ function attachListHandlers(pages: number) {
     logTab = tab;
     logPage = 1;
   };
+  // a rebuilt page field gets the focus back
   const input = document.getElementById("log-page") as HTMLInputElement | null;
-  if (input) {
-    input.onfocus = () => {
-      pageInputFocused = true;
-    };
-    input.oninput = () => {
-      const n = parseInt(input.value, 10);
-      if (!Number.isFinite(n)) return;
-      logPage = Math.min(pages, Math.max(1, n));
-    };
-    input.onkeydown = (ev) => {
-      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") {
-        edgeLeftCount = 0;
-        edgeRightCount = 0;
-        return;
-      }
-      const pos = input.selectionStart ?? 0;
-      const collapsed = pos === (input.selectionEnd ?? 0);
-      if (ev.key === "ArrowLeft" && collapsed && pos <= 0) {
-        edgeLeftCount += 1;
-        edgeRightCount = 0;
-        if (edgeLeftCount >= 2) {
-          edgeLeftCount = 0;
-          pageInputFocused = false;
-          input.blur();
-        }
-      } else if (
-        ev.key === "ArrowRight" &&
-        collapsed &&
-        pos >= input.value.length
-      ) {
-        edgeRightCount += 1;
-        edgeLeftCount = 0;
-        if (edgeRightCount >= 2) {
-          edgeRightCount = 0;
-          pageInputFocused = false;
-          input.blur();
-        }
-      } else {
-        edgeLeftCount = 0;
-        edgeRightCount = 0;
-      }
-    };
-    if (pageInputFocused && document.activeElement !== input) {
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
+  if (input && pageInputFocused && document.activeElement !== input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
   }
 }
 
@@ -576,23 +547,13 @@ function listPage(): MiniHtmlString {
           const id = `row-${row.invocationId}`;
           const tx = txlogForInvocation(row.invocationId, logs);
           const txBtn = `txbtn-${row.invocationId}`;
-          const el = document.getElementById(id);
-          if (el) {
-            el.onclick = () => {
-              pageInputFocused = false;
-              router.navigate("/invo/:invocationId", {
-                invocationId: row.invocationId,
-              });
-            };
-          }
-          const jump = document.getElementById(txBtn);
-          if (jump && tx) {
-            jump.onclick = (ev) => {
-              ev.stopPropagation();
-              openTxRow(tx);
-            };
-          }
-          return html`<div class="log-row" id="${id}">
+          const openRow = () => {
+            pageInputFocused = false;
+            router.navigate("/invo/:invocationId", {
+              invocationId: row.invocationId,
+            });
+          };
+          return html`<div class="log-row" id="${id}" onclick=${openRow}>
       <div class="log-status">${row.status}</div>
       <div>${titleFor(row)}</div>
       <div class="log-meta">
@@ -603,30 +564,52 @@ function listPage(): MiniHtmlString {
           : ""}
       </div>
       ${row.toolId === "001" && tx ? txEtaLine(tx) : ""}
-      ${tx ? html`<div class="log-jump" id="${txBtn}">txlog</div>` : ""}
+      ${tx
+        ? html`<div
+            class="log-jump"
+            id="${txBtn}"
+            onclick=${(ev: Event) => {
+              ev.stopPropagation();
+              openTxRow(tx);
+            }}
+          >
+            txlog
+          </div>`
+        : ""}
     </div>`;
         });
-  attachListHandlers(pages);
+  listKeys(pages);
   return html`<div class="log-page">
     ${styles}
     <div class="log-top">
       <div class="log-title">action log</div>
       <div class="log-pager">
-        <input class="log-page-input" id="log-page" value="${logPage}" maxlength="3" inputmode="numeric" />
-        <div class="log-page-btn" id="log-prev">&lt;</div>
-        <div class="log-page-btn" id="log-next">&gt;</div>
+        <input
+          class="log-page-input"
+          id="log-page"
+          value="${logPage}"
+          maxlength="3"
+          inputmode="numeric"
+          onfocus=${() => {
+            pageInputFocused = true;
+          }}
+          oninput=${(ev: Event) => typePage(ev, pages)}
+          onkeydown=${pageFieldKeys}
+        />
+        <div class="log-page-btn" id="log-prev" onclick=${() => turnPage(Math.max(1, logPage - 1))}>&lt;</div>
+        <div class="log-page-btn" id="log-next" onclick=${() => turnPage(Math.min(pages, logPage + 1))}>&gt;</div>
       </div>
     </div>
     ${total
-      ? items
+      ? html`<div>${items}</div>`
       : html`<div class="log-empty">${isTx ? "no sends" : "no tool calls"}</div>`}
     ${walletFilter && !isTx
       ? html`<div class="log-meta">Calls with no wallet are shown under all wallets.</div>`
       : ""}
     <div class="log-tabs">
-      <div class="log-tab${logTab === "history" ? " log-tab-active" : ""}" id="log-tab-history">history</div>
-      <div class="log-tab${logTab === "success" ? " log-tab-active" : ""}" id="log-tab-success">success</div>
-      <div class="log-tab${logTab === "discarded" ? " log-tab-active" : ""}" id="log-tab-discarded">discarded</div>
+      <div class="log-tab${logTab === "history" ? " log-tab-active" : ""}" id="log-tab-history" onclick=${() => chooseTab("history")}>history</div>
+      <div class="log-tab${logTab === "success" ? " log-tab-active" : ""}" id="log-tab-success" onclick=${() => chooseTab("success")}>success</div>
+      <div class="log-tab${logTab === "discarded" ? " log-tab-active" : ""}" id="log-tab-discarded" onclick=${() => chooseTab("discarded")}>discarded</div>
       <div class="log-tx-controls">
         <div class="log-tab${logTab === "txlog" ? " log-tab-active" : ""}" id="log-tab-txlog" onclick=${() => chooseTab("txlog")}>txlog</div>
         ${walletDropdown()}
@@ -696,7 +679,7 @@ function invoInfo(
   extra?: MiniHtmlString,
 ): MiniHtmlString {
   if (!rows.length && !extra) return html``;
-  return html`<div class="log-info">${rows}${extra ?? ""}</div>`;
+  return html`<div class="log-info">${html`<div>${rows}</div>`}${extra ?? ""}</div>`;
 }
 
 function txInfoRows(log: TxLog, wallet: string): MiniHtmlString[] {
@@ -706,7 +689,7 @@ function txInfoRows(log: TxLog, wallet: string): MiniHtmlString[] {
     .map((payment) => `${payment.amount ?? ""} ${payment.address ?? ""}`)
     .join(" | ");
   addInfoRow(rows, "result", [log.error ?? "", payments].filter(Boolean).join(" "));
-  addInfoRow(rows, "inputs", (log.inputs_index ?? []).join(", "));
+  addInfoRow(rows, "input indexes", (log.inputs_index ?? []).join(", "));
   addInfoRow(rows, "wallet", wallet);
   return rows;
 }
@@ -735,13 +718,18 @@ function detailPage(invocationId: string): MiniHtmlString {
     <div class="log-status">${status}</div>
     ${invoInfo(
       invoRows(head),
-      tx ? html`<div class="log-jump" id="open-txlog" onclick=${() => openTxRow(tx)}>txlog</div>` : undefined,
+      tx
+        ? html`<div class="log-jump" id="open-txlog" onclick=${() => openTxRow(tx)}>txlog</div>`
+        : undefined,
     )}
     ${head?.toolId === "001" && tx ? txEtaLine(tx) : ""}
     ${retryHint ? html`<div id="handover-hint">${retryHint}
       <div class="log-jump" id="retry-handover" onclick=${retry}>retry handover</div></div>` : html`<span hidden></span>`}
     ${evs.length
-      ? evs.map(eventLine)
+      ? html`<details class="log-events">
+          <summary>events</summary>
+          ${evs.map(eventLine)}
+        </details>`
       : html`<div class="log-empty">no events</div>`}
     <div class="log-back" id="log-back" onclick=${goHome}>back</div>
   </div>`;
