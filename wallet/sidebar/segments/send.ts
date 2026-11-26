@@ -279,8 +279,13 @@ export function sendPlateContent() {
   const toolInfoSnippet = toolInfo(open);
   const validitySnippet = validityMessage(open);
   // the amount field shows only in standard mode. the tool sync runs only then too.
+  // the open call fills and locks the fields. a shown call that ends outside the plate clears its values.
   if (!coinControlIsOn()) {
     const newSpend = !!open && open.invocationId !== lastSpendId;
+    const ended = !open && lastSpendId
+      ? window.wallets?.actionLogOpened?.invocations().find((item) => item.invocationId === lastSpendId)
+      : undefined;
+    if (ended && row.address === ended.address) clearSendForm();
     lastSpendId = open?.invocationId ?? null;
     if (toolAmount != null) parseAmountCallback(convertBigIntAmount(toolAmount));
     else if (newSpend) parseAmountCallback("");
