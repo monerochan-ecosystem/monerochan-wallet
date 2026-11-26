@@ -12,7 +12,7 @@ setDebugPort(PORT);
 const root = process.cwd();
 const started = spawnSync("bash", [
   resolve(root, "test/brave.sh"), "ensure",
-  "--profile", resolve(root, "testdata/fresh-install-profile"),
+  "--profile", resolve(root, process.env.FRESH_BRAVE_PROFILE || "testdata/fresh-install-profile"),
   "--port", String(PORT),
   "--log", resolve(root, "testdata/direct-tool-brave.log"),
 ], { stdio: "inherit" });
