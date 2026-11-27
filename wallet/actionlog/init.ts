@@ -25,6 +25,10 @@ export function actionLogWallets() {
   return wallets?.wallets ?? [];
 }
 
+export function actionLogWalletsOpened() {
+  return wallets;
+}
+
 export function actionLogHeight(): number | undefined {
   return confirmationChainHeight(wallets?.connectionStatus);
 }

@@ -10,10 +10,12 @@ import { needsReorgReset, reloadWalletBackground, resetWallet, reviveSidebar, st
 
 const LOCAL = "http://127.0.0.1:18081";
 const REMOTE = "https://node.monero.fail";
+const ALTERNATE_LOCAL = "http://localhost:18081";
 
 let ws: WebSocket;
 let send: (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<any>;
 let sessionId: string;
+let heldReply: { requestId: string; status: number } | undefined;
 
 async function attachRaw(): Promise<void> {
   const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
@@ -105,7 +107,11 @@ async function attach(): Promise<void> {
 
 async function connect(): Promise<void> {
   try { ws.close(); } catch { /* first run or already gone */ }
-  const c = await cdp();
+  const c = await cdp((message) => {
+    if (message.method === "Fetch.requestPaused" && message.sessionId === sessionId) {
+      heldReply = { requestId: message.params.requestId, status: message.params.responseStatusCode };
+    }
+  });
   ws = c.ws;
   send = c.send;
   await attach();
@@ -225,20 +231,78 @@ async function waitFor(elId: string): Promise<void> {
 }
 
 async function setInput(elId: string, value: string): Promise<void> {
-  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); if (typeof el.oninput === "function") el.oninput(); return 1; })()`);
+  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); return 1; })()`);
 }
 
 async function fieldValue(elId: string): Promise<string> {
   return (await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); return el ? el.value : ""; })()`)) ?? "";
 }
 
-async function storedNode(): Promise<string> {
-  const raw = await ev(`(async () => {
+type NodeSettings = { nodeUrl: string; startHeight: number | null };
+
+async function storedSettings(): Promise<NodeSettings> {
+  return ev(`(async () => {
     const db = await new Promise((resolve, reject) => { const req = indexedDB.open("files"); req.onerror = () => reject(req.error); req.onsuccess = () => resolve(req.result); });
-    const text = await new Promise((resolve, reject) => { const req = db.transaction("files").objectStore("files").get("ScanSettings.json"); req.onerror = () => reject(req.error); req.onsuccess = () => resolve(req.result || ""); });
-    return text ? JSON.parse(text).node_url || "" : "";
+    try {
+      const text = await new Promise((resolve, reject) => { const req = db.transaction("files").objectStore("files").get("ScanSettings.json"); req.onerror = () => reject(req.error); req.onsuccess = () => resolve(req.result || ""); });
+      if (!text) throw new Error("missing ScanSettings.json");
+      const settings = JSON.parse(text);
+      return { nodeUrl: settings.node_url, startHeight: settings.start_height ?? null };
+    } finally {
+      db.close();
+    }
   })()`);
-  return raw || "";
+}
+
+async function nodeFields() {
+  return await ev(`({
+    nodeUrl: document.getElementById("nodeUrl")?.value,
+    startHeight: document.getElementById("startHeight")?.value,
+    status: document.querySelector("[class^=status-message-]")?.textContent.trim() ?? "",
+    workerUrl: window.wallets?.node_url,
+  })`) as { nodeUrl: string; startHeight: string; status: string; workerUrl: string };
+}
+
+function fieldsMatch(settings: NodeSettings, fields: Awaited<ReturnType<typeof nodeFields>>): boolean {
+  return fields.nodeUrl === settings.nodeUrl && fields.startHeight === String(settings.startHeight ?? "");
+}
+
+async function resetFields(saved: NodeSettings): Promise<void> {
+  await clickId("resetNodeUrl");
+  const restored = await poll(nodeFields, (fields) =>
+    fieldsMatch(saved, fields) && fields.status === "Node URL, start height reset", 8000, "saved node fields");
+  if (!restored) throw new Error("reset did not restore saved node fields");
+}
+
+async function testLateReply(saved: NodeSettings): Promise<void> {
+  await setInput("nodeUrl", ALTERNATE_LOCAL);
+  await send("Fetch.enable", {
+    patterns: [{ urlPattern: ALTERNATE_LOCAL + "/json_rpc", requestStage: "Response" }],
+  }, sessionId);
+  try {
+    // remember the promise returned by the real click handler so the check waits for it.
+    await ev(`(() => {
+      const button = document.getElementById("sendTestRequest");
+      const onclick = button.onclick;
+      button.onclick = function (event) {
+        window.nodeUrlTestResult = onclick.call(this, event);
+      };
+      try { button.click(); } finally { button.onclick = onclick; }
+      if (typeof window.nodeUrlTestResult?.then !== "function") throw new Error("test connection did not start");
+    })()`);
+    const reply = await poll(async () => heldReply, (reply) => !!reply, 4000, "held node reply");
+    if (reply?.status !== 200) throw new Error("expected a held HTTP 200 Regtest reply");
+    await resetFields(saved);
+    await send("Fetch.continueResponse", { requestId: reply.requestId }, sessionId);
+    await ev(`(async () => {
+      await window.nodeUrlTestResult;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    })()`);
+  } finally {
+    heldReply = undefined;
+    await send("Fetch.disable", {}, sessionId);
+    await ev("delete window.nodeUrlTestResult");
+  }
 }
 
 async function ensureWalletReady(): Promise<void> {
@@ -348,11 +412,12 @@ async function main(): Promise<void> {
     let storedBefore = "";
     await attempt(c.name, async () => {
       await ensureWalletReady();
-      storedBefore = await storedNode();
+      storedBefore = (await storedSettings()).nodeUrl;
       await ensurePlate("connection");
       await waitFor("sendTestRequest");
       await setInput("nodeUrl", c.typed);
-      const typedIn = await poll(async () => fieldValue("nodeUrl"), (v) => v === c.typed, 8000, c.name + " typed");
+      const typedIn = await poll(nodeFields, (fields) =>
+        fields.nodeUrl === c.typed && fields.status === "", 8000, c.name + " typed");
       if (!typedIn) throw new Error("input did not take " + c.typed);
       await clickId("sendTestRequest");
       const done = await poll(async () => {
@@ -371,7 +436,7 @@ async function main(): Promise<void> {
       const full = await text();
       const lines = full.split("\n").map((x) => x.trim()).filter((x) => /get_info|saved|failed|success|node url/i.test(x)).slice(0, 4);
       const body = lines.join(" ");
-      const stored = await storedNode();
+      const stored = (await storedSettings()).nodeUrl;
       if (stored !== storedBefore) return { ok: false, detail: `stored moved ${storedBefore} -> ${stored}` };
       if (c.success) {
         const ok = node === c.want && body.includes("get_info response success") && full.includes("height");
@@ -382,19 +447,25 @@ async function main(): Promise<void> {
     });
   }
 
-  // reset puts the stored values back in the fields. it does not write the file.
-  await attempt("test button does not save", async () => {
-    await ensureWalletReady();
-    await ensurePlate("connection");
-    await waitFor("resetNodeUrl");
-    await clickId("resetNodeUrl");
-    const restored = await poll(async () => fieldValue("nodeUrl"), (v) => v.length > 0, 8000, "reset field");
-    if (!restored) throw new Error("reset did not fill the field");
+  const saved = await storedSettings();
+  await attempt("reset restores saved node fields", async () => {
+    await resetFields(saved);
   }, async () => {
-    const node = await fieldValue("nodeUrl");
-    const stored = await storedNode();
-    const ok = node === stored && stored.length > 0;
-    return ok ? { ok: true, detail: `stored=${stored}` } : { ok: false, detail: `stored=${stored} field=${node}` };
+    const fields = await nodeFields();
+    const stored = await storedSettings();
+    const ok = fieldsMatch(saved, fields) && stored.nodeUrl === saved.nodeUrl && stored.startHeight === saved.startHeight;
+    return { ok, detail: JSON.stringify({ saved, fields, stored }) };
+  });
+
+  await attempt("reset ignores a late test connection reply", async () => {
+    if (saved.nodeUrl !== LOCAL) throw new Error("expected the saved node to be local Regtest");
+    await testLateReply(saved);
+  }, async () => {
+    const fields = await nodeFields();
+    const stored = await storedSettings();
+    const ok = fieldsMatch(saved, fields) && fields.status === "Node URL, start height reset" &&
+      fields.workerUrl === saved.nodeUrl && stored.nodeUrl === saved.nodeUrl && stored.startHeight === saved.startHeight;
+    return { ok, detail: JSON.stringify({ saved, fields, stored }) };
   });
 
   const failed = results.filter((r) => !r.ok);

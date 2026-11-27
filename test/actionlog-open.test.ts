@@ -7,7 +7,6 @@ import {
 
 const base = "chrome-extension://test-wallet/actionlog.html";
 const originalBrowser = Object.getOwnPropertyDescriptor(globalThis, "browser");
-const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
 let tabs: { id: number; url: string }[] = [];
 let opened: string[] = [];
 let updated: (string | undefined)[] = [];
@@ -16,9 +15,13 @@ beforeAll(() => {
   Object.defineProperty(globalThis, "browser", {
     configurable: true,
     value: {
-      runtime: { getURL: () => base },
+      runtime: { getURL: (path: string) => new URL(path, base).href },
       tabs: {
         query: async () => tabs,
+        create: async ({ url }: { url: string }) => {
+          opened.push(url);
+          tabs.push({ id: opened.length, url });
+        },
         remove: async (ids: number[]) => {
           tabs = tabs.filter((tab) => !ids.includes(tab.id));
         },
@@ -30,25 +33,11 @@ beforeAll(() => {
       },
     },
   });
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: {
-      open: (url: string) => {
-        opened.push(url);
-        tabs.push({ id: opened.length, url });
-      },
-    },
-  });
 });
 
 afterAll(() => {
-  for (const [key, descriptor] of [
-    ["browser", originalBrowser],
-    ["window", originalWindow],
-  ] as const) {
-    if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-    else Reflect.deleteProperty(globalThis, key);
-  }
+  if (originalBrowser) Object.defineProperty(globalThis, "browser", originalBrowser);
+  else Reflect.deleteProperty(globalThis, "browser");
 });
 
 beforeEach(() => {
@@ -78,6 +67,24 @@ test("visiting an open log changes only the route and keeps the page state", asy
   expect(updated).toEqual([`${base}?wallet=wallet-a#/invo/call-2`]);
   await openActionLogPage(undefined, "wallet-c");
   expect(updated[1]).toBe(`${base}?wallet=wallet-a#/`);
+});
+
+test("opening a txlog detail uses its wallet and transaction index", async () => {
+  const { openActionLogTx } = await import("../wallet/actionlog/open");
+  await openActionLogTx("wallet-b", 7);
+  expect(opened).toEqual([`${base}?wallet=wallet-b#/tx/wallet-b/7`]);
+  await openActionLogTx("wallet-a", 4);
+  expect(updated).toEqual([`${base}?wallet=wallet-b#/tx/wallet-a/4`]);
+});
+
+test("self spend opens a wallet draft linked to the exact TxLog row", async () => {
+  const { openSelfSpend } = await import("../wallet/actionlog/open");
+  await openSelfSpend("wallet-b", 0);
+  const url = new URL(opened[0]!);
+  expect(url.pathname).toBe("/sidebar.html");
+  expect(url.searchParams.get("wallet")).toBe("wallet-b");
+  expect(url.searchParams.get("self-spend")).toBe("0");
+  expect(updated).toEqual([]);
 });
 
 test("visiting the current route does not reload the open page", async () => {

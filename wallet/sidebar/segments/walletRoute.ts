@@ -2,20 +2,15 @@ import {
   type ConnectionStatus,
   type ManyScanCachesOpened,
 } from "@spirobel/monero-wallet-api/unpacked";
-import type { Mini } from "../../../mininext/mininext";
+import type { Mini } from "@spirobel/mininext";
 import { router, type WalletRouteParams } from "../router";
-import { attachHandlers } from "../ui/buttons";
 import {
   lowerButtonIds,
   lowerClickHandler,
   walletLower,
   type LowerButtonId,
 } from "./walletLower";
-import {
-  safetyButtonIds,
-  safetyClickHandler,
-  walletUpper,
-} from "./walletUpper";
+import { walletUpper } from "./walletUpper";
 import { walletRouteToString, type WalletRoute } from "@spirobel/seedphrase";
 
 declare global {
@@ -38,8 +33,6 @@ export const walletRoute = (mini: Mini, params: WalletRouteParams) => {
   window.walletRouteParams = params;
   //derive current wallet from that
   // with window.wallets
-  attachHandlers(safetyButtonIds, safetyClickHandler);
-  attachHandlers(lowerButtonIds, lowerClickHandler);
   document.onkeydown = (ev) => {
     const tag = (ev.target as HTMLElement | null)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -54,7 +47,7 @@ export const walletRoute = (mini: Mini, params: WalletRouteParams) => {
     };
     const plate = plates[ev.key.toLowerCase()];
     if (!plate) return;
-    document.getElementById(lowerButtonIds[plate])?.click();
+    lowerClickHandler(lowerButtonIds[plate]);
   };
   return mini.html`
         <div class="main">

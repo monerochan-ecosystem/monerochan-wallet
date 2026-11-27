@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync, readFileSync, rmSync } from "node:fs";
 import { parseToolLink } from "@spirobel/monero-wallet-api/tools";
+import * as walletApi from "@spirobel/monero-wallet-api";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { cdp, debugHttp, targetByUrl } from "./cdp.js";
@@ -13,7 +14,10 @@ if (!/^[a-zA-Z0-9_-]+$/.test(runId)) throw new Error("invalid run id");
 const shotDir = join(here, "../testdata/browser-001-runs", runId);
 rmSync(shotDir, { recursive: true, force: true });
 mkdirSync(shotDir, { recursive: true });
+const walletless = process.env.CHECKOUT_MODE === "walletless";
 function shopRoot(origin: string) {
+  if (process.env.CHECKOUT_ROOT) return process.env.CHECKOUT_ROOT;
+  if (walletless) return join(here, "../../monero-wallet-api/walletless-checkout");
   return origin.includes(":3004")
     ? join(here, "../../monero-wallet-api/standard-checkout")
     : (process.env.SHOP_ROOT || join(here, "../../monero-payment-links"));
@@ -34,19 +38,26 @@ await ensureHealthyWallet();
 const nodeInfo = await fetch(REGTEST_NODE + "/get_info").then((r) => r.json());
 if (nodeInfo.nettype !== "fakechain" || !nodeInfo.offline || nodeInfo.height < 10000) throw new Error("acceptance test needs an offline regtest chain with enough decoy history");
 const checkoutUrl = process.env.CHECKOUT_URL || "";
-const startUrl = checkoutUrl || `http://127.0.0.1:3003/pay/${shopPaymentLinkId()}`;
-if (checkoutUrl) await pointShopsAtRegtest(new URL(startUrl).origin);
-assertShopNode(new URL(startUrl).origin);
+let startUrl = checkoutUrl || `http://127.0.0.1:3003/pay/${shopPaymentLinkId()}`;
+if (checkoutUrl && !walletless && !process.env.CHECKOUT_ROOT) await pointShopsAtRegtest(new URL(startUrl).origin);
+if (!walletless) assertShopNode(new URL(startUrl).origin);
 console.log("wallet healthy, checkout " + startUrl);
 
-const { ws, send } = await cdp();
+const heldPayerRequests: { requestId: string; sessionId?: string; tx_as_hex: string; released: boolean }[] = [];
+const { ws, send } = await cdp((event) => {
+  if (event.method !== "Fetch.requestPaused") return;
+  heldPayerRequests.push({ requestId: event.params.requestId, sessionId: event.sessionId,
+    tx_as_hex: JSON.parse(event.params.request.postData).tx_as_hex, released: false });
+});
+const handoverOnly = process.env.HANDOVER_ONLY === "1";
 let co = "";
 let expectedAmount = "";
 let expectedAddress = "";
 let expectedLink = "";
+let checkoutTarget = "";
 
 async function onCheckout(expr: string): Promise<any> {
-  const t = await targetByUrl("checkoutId");
+  const t = checkoutTarget ? { id: checkoutTarget } : await targetByUrl("checkoutId");
   const s = await send("Target.attachToTarget", { targetId: t.id, flatten: true });
   await send("Runtime.enable", {}, s.sessionId);
   const r = await send("Runtime.evaluate", { expression: expr, returnByValue: true, awaitPromise: true }, s.sessionId);
@@ -75,6 +86,7 @@ async function panelClick(elId: string): Promise<void> {
 
 await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of al.getActiveByPermissions(["spend"])) al.dismiss(x.invocationId); return 1; })()`);
 
+if (!handoverOnly) {
 // an unverified payment link shows an info message with a dismiss button.
 await openCheckout();
 {
@@ -112,6 +124,7 @@ await openCheckout();
   if (!shown) throw new Error("unverified info message missing");
   const btn = await panel(`!!document.getElementById("dismissInfo")`);
   if (btn === true) throw new Error("dismiss button still next to the info message");
+  await shotTarget((await targetByUrl("sidebar.html")).id, "unverified-link");
   console.log("info message: unverified, no dismiss");
   await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of al.getActiveByPermissions(["spend"])) al.dismiss(x.invocationId); return 1; })()`);
 }
@@ -157,11 +170,14 @@ await openCheckout();
   if (!shown) throw new Error("shadow link did not open the unverified info message");
   const btn = await panel(`!!document.getElementById("dismissInfo")`);
   if (btn === true) throw new Error("dismiss button still next to the shadow info message");
+  await shotTarget((await targetByUrl("sidebar.html")).id, "unverified-shadow-link");
   console.log("shadow link: unverified, no dismiss");
   await panel(`(() => { const al = window.wallets.actionLogOpened; for (const x of al.getActiveByPermissions(["spend"])) al.dismiss(x.invocationId); return 1; })()`);
 }
 
-async function openCheckout(): Promise<string> {
+}
+
+async function openCheckout(label = "walletless-unpaid"): Promise<string> {
   const nt: any = await send("Target.createTarget", { url: startUrl });
   {
     const start = Date.now();
@@ -173,7 +189,15 @@ async function openCheckout(): Promise<string> {
     }
   }
   if (!co.includes("checkoutId")) throw new Error("no checkout session");
-  await shotTarget(nt.targetId, "checkout");
+  if (walletless && !label.startsWith("checkout-handover-")) {
+    const s = await send("Target.attachToTarget", { targetId: nt.targetId, flatten: true });
+    for (let i = 0; i < 100; i++) {
+      const ready = await send("Runtime.evaluate", { expression: '!!document.querySelector("a.pay-button") && !!document.querySelector("iframe")?.contentDocument?.body?.innerText', returnByValue: true }, s.sessionId);
+      if (ready.result.value) break;
+      await Bun.sleep(100);
+    }
+  }
+  await shotTarget(nt.targetId, label);
   return nt.targetId;
 }
 async function shotTarget(targetId: string, name: string) {
@@ -186,8 +210,9 @@ async function shotTarget(targetId: string, name: string) {
     console.log("shot fail", name, err instanceof Error ? err.message : String(err));
   }
 }
-async function drivePayment(label: string, kind = "001"): Promise<void> {
-  const ntId: string = await openCheckout();
+async function drivePayment(label: string, kind = "001"): Promise<string> {
+  const ntId: string = await openCheckout("checkout-" + label);
+  checkoutTarget = ntId;
   // pay click with a trusted gesture (on the new checkout, not a stale tab)
   {
     const listed: any[] = await (await fetch(debugHttp() + "/json/list")).json();
@@ -226,6 +251,7 @@ async function drivePayment(label: string, kind = "001"): Promise<void> {
   await shotTarget((await targetByUrl("sidebar.html")).id, "spend-" + label);
   const unlocked = await panel(`String(window.unlocked)`);
   if (unlocked !== "true") await panelClick("fire");
+  return ntId;
 }
 
 async function openAndArm(label: string, kind = "001"): Promise<void> {
@@ -272,7 +298,8 @@ async function openAndArm(label: string, kind = "001"): Promise<void> {
       }
       await new Promise((r) => setTimeout(r, 200));
     }
-    if (!ready) throw new Error("tool block never populated");
+    await shotTarget((await targetByUrl("sidebar.html")).id, (ready ? "ready-" : "failed-ready-") + label);
+    if (!ready) throw new Error("payment form did not become ready: " + label);
     const waitSend = Date.now();
     let armed = false;
     while (Date.now() - waitSend < 10000) {
@@ -307,8 +334,16 @@ async function clickSend(): Promise<boolean> {
   await panelClick("send-action");
   return true;
 }
+const nodeGate = handoverOnly ? "" : process.env.CHECKOUT_NODE_GATE || "";
+let gateSession = "";
+let receiptCaptured = false;
+if (nodeGate) {
+  await fetch(nodeGate + "/hold", { method: "POST" });
+  gateSession = (await send("Target.attachToTarget", { targetId: (await targetByUrl("background.html")).id, flatten: true })).sessionId;
+  await send("Fetch.enable", { patterns: [{ urlPattern: REGTEST_NODE + "/send_raw_transaction", requestStage: "Request" }] }, gateSession);
+}
 // use the same signed, broadcast, and confirmed payment path for all link forms.
-for (const kind of ["001", "legacy-amount", "legacy-address", "legacy-zero"]) {
+for (const kind of handoverOnly ? [] : walletless ? ["001"] : ["001", "legacy-amount", "legacy-address", "legacy-zero"]) {
 const poolBefore = await poolIds();
 await drivePayment(kind, kind);
 await openAndArm(kind, kind);
@@ -317,6 +352,43 @@ let decoyRetried = false;
 {
   const start = Date.now();
   while (Date.now() - start < 60000 && !entry) {
+    if (nodeGate && !receiptCaptured && heldPayerRequests.some((request) => !request.released)) {
+      const gate = await fetch(nodeGate + "/state").then((response) => response.json());
+      if (gate.pending > 0) {
+        await send("Target.activateTarget", { targetId: checkoutTarget });
+        const deadline = Date.now() + 6000;
+        let visible = false;
+        while (Date.now() < deadline) {
+          const { value } = await onCheckout('document.querySelector("iframe")?.contentDocument?.body?.innerText || ""');
+          if (String(value).includes("Transaction is valid & amount correct.")) { visible = true; break; }
+          await Bun.sleep(100);
+        }
+        if (!visible) throw new Error("receipt was not shown before node acceptance");
+        const held = heldPayerRequests.find((request) => !request.released)!;
+        if (held.tx_as_hex !== gate.tx_as_hex) throw new Error("merchant received different bytes");
+        const database = new Database(join(shopRoot(new URL(co).origin), "monero_payments.db"), { readonly: true });
+        const row = database.query("SELECT tx_hash, paid_status, tx_confirmations FROM checkout_session WHERE session_id = ?").get(new URL(co).searchParams.get("checkoutId")) as any;
+        database.close();
+        if (!row?.tx_hash || row.paid_status || row.tx_confirmations) throw new Error("receipt was not saved as unpaid");
+        if ((await poolIds()).has(row.tx_hash)) throw new Error("transaction reached the test node before either request was released");
+        const { value: fits } = await onCheckout('(() => { const frame = document.querySelector("iframe"); const box = frame?.contentDocument?.querySelector(".payment-status")?.getBoundingClientRect(); return !!box && box.bottom <= frame.clientHeight + 1; })()');
+        if (!fits) throw new Error("receipt status is clipped by its iframe");
+        const receiptHoldMs = Math.max(0, Math.min(6000, Number(process.env.RECEIPT_HOLD_MS) || 2000));
+        await Bun.sleep(receiptHoldMs);
+        await shotTarget(checkoutTarget, "received-" + kind);
+        await Bun.write(join(shotDir, "received-" + kind + ".json"), JSON.stringify({ ...row, payerSubmissionHeld: true, merchantSubmissionHeld: true, exactSignedBytes: true, absentFromNode: true, receiptHoldMs, timestamp: new Date().toISOString() }, null, 2));
+        await fetch(nodeGate + "/release", { method: "POST" });
+        for (const request of heldPayerRequests) {
+          if (request.released) continue;
+          await send("Fetch.continueRequest", { requestId: request.requestId }, request.sessionId);
+          request.released = true;
+        }
+        await send("Fetch.disable", {}, gateSession);
+        receiptCaptured = true;
+        await send("Target.activateTarget", { targetId: (await targetByUrl("sidebar.html")).id });
+        console.log("PASS receipt rendered while both submissions were held, before node acceptance");
+      }
+    }
     const result = await newestExecute();
     if (result?.ok) { entry = "execute_result|" + result.id; break; }
     if (result && !result.ok) {
@@ -426,6 +498,35 @@ function serverConfirmation() {
   }
 }
 let final = serverConfirmation();
+await send("Target.activateTarget", { targetId: checkoutTarget });
+if (checkoutUrl && kind === "001") {
+  const handover = await panel(`(() => { const x = window.wallets.actionLogOpened.invocations().find(x => x.invocationId === ${JSON.stringify(executedId)}); return [...(x?.events ?? [])].reverse().find(e => e.handover)?.handover; })()`);
+  if (handover?.ok !== true) throw new Error("checkout handover failed: " + JSON.stringify(handover));
+  const until = Date.now() + 10000;
+  const expectedStatus = walletless ? "Transaction accepted by node." : "Transaction is valid & amount correct.";
+  let acceptedVisible = false;
+  while (Date.now() < until) {
+    const { value } = await onCheckout('document.querySelector("iframe")?.contentDocument?.body?.innerText || ""');
+    if (String(value).includes(expectedStatus)) { acceptedVisible = true; break; }
+    await Bun.sleep(100);
+  }
+  if (!acceptedVisible) throw new Error("checkout did not render " + expectedStatus);
+  await shotTarget(checkoutTarget, "accepted-" + kind);
+  await mineTo(DECOY, 3);
+  const afterThree = Date.now() + 15000;
+  while (Date.now() < afterThree && serverConfirmation().conf < 3) await Bun.sleep(100);
+  if (serverConfirmation().conf < 3) throw new Error("checkout did not track the first three confirmations");
+  // the status frame reloads each second. wait until it shows the count, or the picture has the old text.
+  const confirmingUntil = Date.now() + 10000;
+  let confirmingVisible = false;
+  while (Date.now() < confirmingUntil) {
+    const { value } = await onCheckout('document.querySelector("iframe")?.contentDocument?.body?.innerText || ""');
+    if (String(value).includes("Transaction confirming (")) { confirmingVisible = true; break; }
+    await Bun.sleep(100);
+  }
+  if (!confirmingVisible) throw new Error("checkout did not render the confirming state");
+  await shotTarget(checkoutTarget, "confirming-" + kind);
+}
 await mineTo(DECOY, Math.max(final.need, 1) + 2);
 const waitStart = Date.now();
 while (Date.now() - waitStart < 180000 && !(final.paid && final.conf >= final.need)) {
@@ -440,10 +541,249 @@ const chain = await fetch(REGTEST_NODE + "/get_transactions", {
   body: JSON.stringify({ txs_hashes: [final.tx] }),
 }).then((r) => r.json());
 if (chain.txs?.[0]?.in_pool !== false || chain.txs?.[0]?.tx_hash !== final.tx) throw new Error("payment is not on chain: " + JSON.stringify(chain));
-await shotTarget((await targetByUrl("checkoutId")).id, "paid-" + kind);
+const paintDeadline = Date.now() + 15000;
+let paidVisible = false;
+while (Date.now() < paintDeadline) {
+  const { value } = await onCheckout('document.querySelector("iframe")?.contentDocument?.body?.innerText || ""');
+  if (String(value).includes("Payment received")) { paidVisible = true; break; }
+  await Bun.sleep(100);
+}
+if (!paidVisible) throw new Error("checkout did not render the paid state");
+await shotTarget(checkoutTarget, "paid-" + kind);
 await Bun.write(join(shotDir, kind + "-state.json"), JSON.stringify({ ...final, kind, address: expectedAddress, amount: expectedAmount, invocationId: executedId, block_height: chain.txs[0].block_height }, null, 2));
 console.log("PASS " + kind + " paid and verified on chain");
 priorIds.add(executedId);
 }
+async function handoverAcceptance() {
+  const merchant = await walletApi.makeTestKeyPair();
+  const viewPair = await walletApi.ViewPair.create(merchant.view_key.mainnet_primary, merchant.view_key.view_key);
+  const receipts = new Map<string, { tx_hash: string; count: number }>();
+  const invoices = new Map<string, { id: string; paymentId: number; address: string; scenario: string; attempts: number }>();
+  const requests: any[] = [];
+  let scenario = "success";
+  let serial = 0;
+  let origin = "";
+  const save = () => Bun.write(join(shotDir, "handover-state.json"), JSON.stringify({ requests, receipts: [...receipts.values()], invoices: [...invoices.values()] }, null, 2));
+  const server = Bun.serve({
+    hostname: "127.0.0.1", port: 0,
+    async fetch(req) {
+      const url = new URL(req.url);
+      if (url.pathname === "/newsession") {
+        const id = String(++serial);
+        const paymentId = 1000 + serial;
+        invoices.set(id, { id, paymentId, address: viewPair.makeIntegratedAddress(paymentId), scenario, attempts: 0 });
+        return Response.redirect(`${origin}/checkout?checkoutId=${id}`, 303);
+      }
+      const id = url.searchParams.get("checkoutId") || "";
+      if (url.pathname === "/checkout") {
+        const invoice = invoices.get(id);
+        if (!invoice) return new Response("missing checkout", { status: 404 });
+        const link = (walletApi.tools["001"].counterparty as any).make({ address: invoice.address, amount: "0.1", no_check: false });
+        return new Response(`<!doctype html><meta charset="utf-8"><title>001 handover checkout</title><a class="pay-button" href="/wallet_info?checkoutId=${id}#${link}">pay with browser wallet</a>`, { headers: {
+          "Content-Type": "text/html",
+          // the checkout page is an authenticated merchant page, like a real shop session.
+          "Set-Cookie": `handover-session=${id}; Path=/; SameSite=Strict`,
+        } });
+      }
+      if (url.pathname.startsWith("/monerochan001/")) {
+        const address = decodeURIComponent(url.pathname.slice("/monerochan001/".length));
+        const invoice = [...invoices.values()].find((row) => row.address === address);
+        const handler = (walletApi.tools["001"].counterparty as any).validate_route({
+          isPayAddressKnown: (check: string) => check === invoice?.address,
+          getUrls: () => invoice ? { successUrl: `${origin}/return?checkoutId=${invoice.id}`, handoverUrl: `${origin}/handover?checkoutId=${invoice.id}` } : {},
+        });
+        return handler(req);
+      }
+      if (url.pathname === "/return") {
+        return new Response("<!doctype html><title>001 handover return</title><p>payment handover</p>", { headers: { "Content-Type": "text/html", "Set-Cookie": `handover-session=${id}; Path=/; SameSite=Strict` } });
+      }
+      if (url.pathname === "/handover" && req.method === "POST") {
+        const invoice = invoices.get(id);
+        if (!invoice) return Response.json({ ok: false, error: "unknown checkout" }, { status: 404 });
+        const body = await req.clone().json();
+        requests.push({ id, origin: req.headers.get("origin"), referer: req.headers.get("referer"),
+          cookie: (req.headers.get("cookie") || "").split(/;\s*/).find((part) => part.startsWith("handover-session=")), body });
+        invoice.attempts++;
+        const handler = (walletApi.tools["001"].counterparty as any).execute_route({
+          node_url: invoice.scenario === "node-failure" && invoice.attempts === 1 ? "http://127.0.0.1:1" : REGTEST_NODE,
+          primary_address: merchant.view_key.mainnet_primary,
+          view_key: merchant.view_key.view_key,
+          checkPayment: (scan: any) => scan.outputs
+            .filter((out: any) => out.payment_id === String(invoice.paymentId))
+            .reduce((sum: bigint, out: any) => sum + BigInt(out.amount), 0n) >= 100000000000n,
+          onAccepted: (scan: any) => {
+            if (!receipts.has(scan.tx_hash)) receipts.set(scan.tx_hash, { tx_hash: scan.tx_hash, count: 1 });
+          },
+        });
+        const response = await handler(req);
+        const result = await response.clone().json();
+        requests.at(-1).result = result;
+        await save();
+        if (invoice.scenario === "lost-reply" && invoice.attempts === 1 && result.ok) return Response.json({ ok: false, tx_hash: result.tx_hash, error: "test lost reply" }, { status: 503 });
+        return response;
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  origin = `http://127.0.0.1:${server.port}`;
+  startUrl = `${origin}/newsession`;
+  const wait = async (check: () => Promise<any>, label: string, ms = 30000) => {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      const result = await check();
+      if (result) return result;
+      await Bun.sleep(100);
+    }
+    throw new Error("handover timeout: " + label);
+  };
+  const returnTabs = async () => (await send("Target.getTargets")).targetInfos
+    .filter((row: any) => String(row.url || "").startsWith(origin) && String(row.url || "").includes("/return")).length;
+  const state = (id: string) => panel(`(() => { const x = window.wallets.actionLogOpened.invocations().find(x => x.invocationId === ${JSON.stringify(id)}); return x ? { ...JSON.parse(JSON.stringify(x, (_k,v) => typeof v === "bigint" ? String(v) : v)), status: x.status } : null; })()`);
+  const handover = (row: any) => [...(row?.events ?? [])].reverse().find((event: any) => event.handover)?.handover;
+  const lastResult = (row: any) => [...(row?.events ?? [])].reverse().find((event: any) => event.type === "execute_result");
+  const background = await targetByUrl("background.html");
+  const backgroundSession = (await send("Target.attachToTarget", { targetId: background.id, flatten: true })).sessionId;
+  await send("Fetch.enable", { patterns: [{ urlPattern: REGTEST_NODE + "/send_raw_transaction", requestStage: "Request" }] }, backgroundSession);
+  const releasePayer = async () => {
+    for (const held of heldPayerRequests) {
+      if (held.released) continue;
+      await send("Fetch.continueRequest", { requestId: held.requestId }, held.sessionId);
+      held.released = true;
+    }
+  };
+  const clickInTarget = async (targetId: string, element: string) => {
+    await send("Target.activateTarget", { targetId });
+    const s = await send("Target.attachToTarget", { targetId, flatten: true });
+    const box = await send("Runtime.evaluate", { expression: `(() => { const el = document.getElementById(${JSON.stringify(element)}); if (!el) return null; el.scrollIntoView({block:"center"}); const b = el.getBoundingClientRect(); return {x:b.x+b.width/2,y:b.y+b.height/2}; })()`, returnByValue: true }, s.sessionId);
+    if (!box.result?.value) throw new Error("missing handover button " + element);
+    const { x, y } = box.result.value;
+    await send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, button: "left", clickCount: 1 }, s.sessionId);
+    await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, button: "left", clickCount: 1 }, s.sessionId);
+  };
+  try {
+    const scenarios = (process.env.HANDOVER_SCENARIOS || "success,lost-reply,node-failure").split(",") as typeof scenario[];
+    for (scenario of scenarios) {
+      // a sparse regtest chain can fail to build a decoy ring. mine and pay again.
+      let sourceTab = "";
+      let invocationId = "";
+      let tabsBefore = -1;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        sourceTab = await drivePayment("handover-" + scenario);
+        invocationId = await panel(`window.wallets.actionLogOpened.getActiveByPermissions(["spend"])[0].invocationId`);
+        if (scenario !== "success") await send("Target.closeTarget", { targetId: sourceTab }).catch(() => {});
+        // hold only the payer's browser request. the merchant's node request stays real.
+        tabsBefore = await returnTabs();
+        const heldBefore = heldPayerRequests.length;
+        await openAndArm("handover-" + scenario);
+        const beforeReply = await wait(async () => {
+          const current = await state(invocationId);
+          if (current?.lastType === "execute_result" && current.ok === false) return { buildFailed: current };
+          const post = requests.find((item) => item.id === String(serial) && item.result);
+          const held = heldPayerRequests[heldBefore];
+          return post && held ? { post, held, current } : null;
+        }, scenario + " merchant POST before payer reply");
+        if (!beforeReply.buildFailed) {
+          if (beforeReply.held.released || beforeReply.current.lastType !== "execute_start") throw new Error("payer request was not held during handover");
+          if (beforeReply.post.body.tx_as_hex !== beforeReply.held.tx_as_hex) throw new Error("merchant received different signed bytes");
+          await Bun.write(join(shotDir, "signing-order-" + scenario + ".json"), JSON.stringify({
+            invocationId, payerRequestHeld: true, merchantReceivedSameBytes: true,
+            merchantResult: beforeReply.post.result, payerResultNotWritten: true,
+          }, null, 2));
+
+          console.log("PASS " + scenario + " merchant received signed transaction while payer request was held");
+        }
+        await releasePayer();
+        const sent = beforeReply.buildFailed || await wait(async () => {
+          const current = await state(invocationId);
+          return current?.lastType === "execute_result" ? current : null;
+        }, scenario + " send result");
+        // sent: a node has the transaction. with a failed handover the result is not ok, and that is the case under test.
+        if (lastResult(sent)?.sent === true) break;
+        const error = String([...(sent.events ?? [])].reverse().find((event: any) => event.error)?.error || "");
+        if (!/decoy|make Input/i.test(error) || attempt === 2) throw new Error(scenario + " send failed: " + error);
+        console.log(scenario, "decoy ring failed, mining 60");
+        await mineTo(DECOY, 60);
+      }
+      let row = await wait(async () => {
+        const current = await state(invocationId);
+        const result = handover(current);
+        return result && (result.ok === true || scenario !== "success") ? current : null;
+      }, scenario + " handover result");
+      // the open source page must be used. a closed one must get a fresh merchant tab.
+      const tabsAfter = await returnTabs();
+      if (scenario === "success" && tabsAfter !== tabsBefore) throw new Error("handover opened a tab although the source page was open");
+      if (scenario !== "success" && tabsAfter !== tabsBefore + 1) throw new Error("handover did not open a merchant tab for the closed source page");
+      console.log(scenario, "handover source:", scenario === "success" ? "open page" : "new tab");
+      if (scenario === "success" && (row.ok !== true || row.status !== "done")) throw new Error("a delivered payment is not done: " + JSON.stringify(lastResult(row)));
+      if (scenario === "success") await shotTarget((await targetByUrl("sidebar.html")).id, "handover-accepted");
+      if (scenario !== "success") {
+        const txHash = handover(row).tx_hash;
+        // the payer sent the transaction but the merchant did not confirm the handover.
+        if (row.ok !== false || lastResult(row)?.sent !== true || row.status !== "failed") throw new Error("a failed handover is not a failed call that says sent: " + JSON.stringify(lastResult(row)));
+        await send("Target.activateTarget", { targetId: (await targetByUrl("sidebar.html")).id }).catch(() => {});
+        const plateHint = await wait(async () => {
+          const text = await panel(`document.querySelector(".executed-hint")?.innerText ?? ""`);
+          return String(text).includes("transaction sent, merchant receipt unconfirmed") && await panel(`!!document.getElementById("retryHandover")`) ? text : null;
+        }, scenario + " hint in the send plate");
+        if (String(plateHint).includes("tool call executed")) throw new Error("the send plate says executed for a failed handover");
+        await shotTarget((await targetByUrl("sidebar.html")).id, "handover-failed-plate-" + scenario);
+        await mineTo(DECOY, 12);
+        const logUrl = (await targetByUrl("sidebar.html")).url.replace(/sidebar\.html.*$/, `actionlog.html#/invo/${invocationId}`);
+        const target = await send("Target.createTarget", { url: logUrl });
+        const attached = await send("Target.attachToTarget", { targetId: target.targetId, flatten: true });
+        await send("Page.enable", {}, attached.sessionId);
+        await send("Page.reload", {}, attached.sessionId);
+        await wait(async () => {
+          const read = await send("Runtime.evaluate", { expression: '!!document.getElementById("retry-handover")', returnByValue: true }, attached.sessionId).catch(() => null);
+          return read?.result?.value;
+        }, "retry button after action log reload");
+        const pageText = (await send("Runtime.evaluate", { expression: "document.body.innerText", returnByValue: true }, attached.sessionId)).result?.value ?? "";
+        if (!String(pageText).includes("transaction sent, merchant receipt unconfirmed") || !/\bfailed\b/.test(String(pageText))) throw new Error("the action log page has no failed-handover hint: " + pageText);
+        await shotTarget(target.targetId, "handover-failed-" + scenario);
+        const beforeRetryTabs = await returnTabs();
+        // one case uses the retry of the action log page, the other the retry of the send plate
+        if (scenario === "lost-reply") await clickInTarget(target.targetId, "retry-handover");
+        else {
+          await send("Target.activateTarget", { targetId: (await targetByUrl("sidebar.html")).id }).catch(() => {});
+          await Bun.sleep(500);
+          await panelClick("retryHandover");
+        }
+        row = await wait(async () => {
+          const current = await state(invocationId);
+          return handover(current)?.ok === true ? current : null;
+        }, scenario + " retry");
+        if (row.ok !== true || row.status !== "done" || lastResult(row)?.sent !== true) throw new Error("an accepted retry did not make the call done: " + JSON.stringify(lastResult(row)));
+        await send("Target.activateTarget", { targetId: (await targetByUrl("sidebar.html")).id }).catch(() => {});
+        await wait(async () => (await panel(`document.querySelector(".executed-hint")?.innerText ?? ""`)).includes("tool call executed"), scenario + " hint after the retry");
+        await shotTarget((await targetByUrl("sidebar.html")).id, "handover-retried-plate-" + scenario);
+        if (await returnTabs() !== beforeRetryTabs) throw new Error("retry opened another tab although the merchant return page was open");
+        if (handover(row).tx_hash !== txHash) throw new Error("retry changed the transaction");
+      }
+      const rows = requests.filter((item) => item.id === String(serial));
+      if (rows.length !== (scenario === "success" ? 1 : 2)) throw new Error("wrong handover attempt count");
+      if (rows.some((item) => item.origin !== origin || !item.cookie?.includes(`handover-session=${serial}`))) throw new Error("handover did not use the merchant page");
+      const expectedPage = `${origin}/${scenario === "success" ? "checkout" : "return"}?checkoutId=${serial}`;
+      if (rows.some((item) => item.referer !== expectedPage)) throw new Error("handover ran outside the expected merchant page");
+      if (rows.some((item) => item.body.tx_as_hex !== rows[0].body.tx_as_hex)) throw new Error("retry used new transaction bytes");
+      if (rows.at(-1).result?.ok !== true || rows.at(-1).result?.tx_hash !== handover(row).tx_hash) throw new Error("merchant did not accept the exact transaction");
+      const nodeState = await fetch(REGTEST_NODE + "/get_transactions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ txs_hashes: [handover(row).tx_hash] }) }).then((r) => r.json());
+      if (nodeState.txs?.[0]?.in_pool !== (scenario === "success")) throw new Error("unexpected node state: " + JSON.stringify(nodeState));
+      const txLogCount = await panel(`window.wallets.wallets.flatMap(w => w.tx_logs).filter(row => row.invocationId === ${JSON.stringify(invocationId)}).length`);
+      if (txLogCount !== 1) throw new Error("retry created another payment");
+      if (receipts.get(handover(row).tx_hash)?.count !== 1) throw new Error("payment was not recorded once");
+      await Bun.write(join(shotDir, "handover-" + scenario + ".json"), JSON.stringify({ invocationId, tx_hash: handover(row).tx_hash, nodeState: nodeState.txs?.[0] }, null, 2));
+      await save();
+      console.log("PASS 001 handover " + scenario + ": exact signed transaction, one payment, one receipt");
+      if (scenario === "success") await mineTo(DECOY, 12);
+    }
+  } finally {
+    await releasePayer().catch(() => {});
+    await send("Fetch.disable", {}, backgroundSession).catch(() => {});
+    await save();
+    server.stop(true);
+  }
+}
+
+await handoverAcceptance();
 ws.close();
 process.exit(0);

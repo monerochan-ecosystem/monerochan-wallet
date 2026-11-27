@@ -1,4 +1,4 @@
-import { createRouter, type Params } from "../../mininext/mininext";
+import { createRouter, type Params } from "@spirobel/mininext";
 import { actionLogDetail, actionLogList, actionLogTx } from "./page";
 
 export const router = createRouter({

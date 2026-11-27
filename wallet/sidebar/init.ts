@@ -13,8 +13,8 @@ configureUnpacked({
   dkgWasmUrl: "frost_dkg.wasm",
 });
 import { router } from "./router";
+import { prepareSelfSpend, selfSpendIsOn, setSendError } from "./segments/coincontrol";
 import { lowerButtonIds } from "./segments/walletLower";
-import { removeActive } from "./ui/buttons";
 import {
   allWallets,
   setConnectionStatus,
@@ -108,6 +108,18 @@ export async function initSidebar() {
     return;
   }
   await initWallets();
+  const params = new URLSearchParams(window.location.search);
+  const txLogIndex = params.get("self-spend");
+  if (txLogIndex && /^\d+$/.test(txLogIndex)) {
+    const wallet = allWallets().find((wallet) => wallet.primary_address === params.get("wallet"));
+    if (wallet?.wallet_route) {
+      const prepared = prepareSelfSpend(wallet, Number(txLogIndex));
+      if (!prepared) setSendError(wallet.primary_address, "self spend inputs unavailable");
+      window.activeWalletPlate = lowerButtonIds.send;
+      router.navigate(wallet.wallet_route);
+      return;
+    }
+  }
   router.navigate(await selectedWalletRouteStore.restore(allWallets()));
 }
 
@@ -121,6 +133,7 @@ export async function setupFinishedYet() {
 }
 
 export async function initToolInvocation() {
+  if (selfSpendIsOn()) return;
   const last = newestOpen();
   if (last) syncUiToOpen(last);
 }
@@ -145,7 +158,6 @@ function newestOpen(): InvocationState | null {
 
 // a new tool call must show send or wallets plate so accept/dismiss btn + tool call info is on screen.
 function syncUiToOpen(open: InvocationState) {
-  removeActive(lowerButtonIds);
   for (const perm of Object.keys(plateByPermission) as Array<
     keyof typeof plateByPermission
   >) {
@@ -156,7 +168,4 @@ function syncUiToOpen(open: InvocationState) {
     window.activeWalletPlate = plateByPermission[perm];
     break;
   }
-  if (!window.activeWalletPlate) return;
-  const button = document.getElementById(window.activeWalletPlate);
-  if (button) button.classList.add("active-switch");
 }

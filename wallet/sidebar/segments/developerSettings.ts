@@ -3,7 +3,7 @@ import {
   readDir,
   type PossibleLogs,
 } from "@spirobel/monero-wallet-api/unpacked";
-import { html, flatten } from "../../../mininext/mininext";
+import { html } from "@spirobel/mininext";
 import { textInput } from "../ui/input";
 import { router } from "../router";
 
@@ -105,13 +105,12 @@ async function deleteAllfiles() {
     await Bun.file(file.filename).delete();
   }
 }
-async function wipeWalletCallback() {
-  const wipeWallet = document.getElementById(
-    "wipeWallet",
-  ) as HTMLInputElement | null;
-  if (!wipeWallet) return;
-  if (wipeWallet.value === "DELETE ALL FILES") {
-    void window.wallets?.stopWorker();
+let wipeWalletValue = "";
+async function wipeWalletCallback(event: Event) {
+  wipeWalletValue = (event.target as HTMLInputElement).value;
+  if (wipeWalletValue === "DELETE ALL FILES") {
+    // stop the background worker before the files go. the wipe goes on when the background does not answer.
+    await window.wallets?.stopWorker().catch(() => {});
     await deleteAllfiles();
     router.navigate("/onboarding");
     location.reload();
@@ -134,24 +133,18 @@ async function exportWallet() {
   };
   download("wallets.json", JSON.stringify(backup, null, 2));
 }
-function openFile(e: MouseEvent) {
-  const target = e.currentTarget as HTMLElement | null;
-  const id = (e.currentTarget as HTMLElement | null)?.id as string;
-  const fileObject = fileObjects[Number(id)];
-  if (!fileObject || !target) return;
-  fileObject.opened = !fileObject.opened;
-  target.classList.toggle("file-opened");
-  target.classList.toggle("file-closed");
-  const content = document.getElementById(`${id}-content`);
-  if (content) {
-    if (target.classList.contains("file-closed")) {
-      content.innerText = "";
-      content.style.backgroundColor = "unset";
-    } else {
-      content.innerText = fileObject.content;
-      content.style.backgroundColor = "#333";
-    }
-  }
+function openFile(index: number) {
+  const fileObject = fileObjects[index];
+  if (fileObject) fileObject.opened = !fileObject.opened;
+}
+function setLogLevel(level: (typeof logLevels)[number]) {
+  chosenLogLevel = level;
+  queueLogSave();
+}
+function toggleLogFn(name: string, event: Event) {
+  if ((event.target as HTMLInputElement).checked) selectedLogFns.add(name);
+  else selectedLogFns.delete(name);
+  queueLogSave();
 }
 let regtestNote = "";
 let regtestNoteTimer: ReturnType<typeof setTimeout> | undefined;
@@ -219,97 +212,24 @@ export function developerSettings() {
   refreshFileList();
 
   const dirlist = fileObjects.map((file, i) => {
-    const filename = document.getElementById(String(i)) as HTMLElement | null;
-    if (filename) {
-      if (file.opened) {
-        filename.classList.add("file-opened");
-        filename.classList.remove("file-closed");
-      } else {
-        filename.classList.add("file-closed");
-        filename.classList.remove("file-opened");
-      }
-    }
-    const content = document.getElementById(
-      `${String(i)}-content`,
-    ) as HTMLElement | null;
-    if (content) {
-      if (file.opened) {
-        content.classList.add("content-opened");
-        content.classList.remove("content-closed");
-      } else {
-        content.classList.add("content-closed");
-        content.classList.remove("content-opened");
-      }
-    }
     return html`<div class="dir">
-      <div class="filename" id="${String(i)}">${file.filename}</div>
-      <div class="content" id="${String(i)}-content">
+      <div
+        class="filename ${file.opened ? "file-opened" : "file-closed"}"
+        id="${String(i)}"
+        onclick=${() => openFile(i)}
+      >
+        ${file.filename}
+      </div>
+      <div
+        class="content ${file.opened ? "content-opened" : "content-closed"}"
+        id="${String(i)}-content"
+        style="background-color: ${file.opened ? "#333" : "unset"}"
+      >
         ${file.opened ? file.content : ""}
       </div>
     </div>`;
   });
-  const dirElement = document.getElementsByClassName("filename");
-  if (dirElement) {
-    for (const element of Array.from(dirElement)) {
-      (element as HTMLElement).onclick = openFile;
-    }
-  }
-
-  const files = flatten(dirlist);
-  const exportWalletButton = document.getElementById(
-    "exportWallet",
-  ) as HTMLElement | null;
-  if (exportWalletButton) {
-    exportWalletButton.onclick = exportWallet;
-  }
-  const wipeWalletInput = document.getElementById(
-    "wipeWallet",
-  ) as HTMLInputElement | null;
-  if (wipeWalletInput) {
-    wipeWalletInput.oninput = wipeWalletCallback;
-  }
-  const regTestOneBlockBtn = document.getElementById(
-    "regtestOneBlock",
-  ) as HTMLElement | null;
-  if (regTestOneBlockBtn) {
-    regTestOneBlockBtn.onclick = regTestOneBlock;
-  }
-  const regTest1000BlockBtn = document.getElementById(
-    "regtest1000Block",
-  ) as HTMLElement | null;
-  if (regTest1000BlockBtn) {
-    regTest1000BlockBtn.onclick = regTest1000Block;
-  }
-  for (const level of logLevels) {
-    const levelBtn = document.getElementById(`log-level-${level}`);
-    if (!levelBtn || levelBtn.onclick) continue;
-    levelBtn.onclick = () => {
-      chosenLogLevel = level;
-      queueLogSave();
-    };
-  }
-  for (const name of LOGGING_FUNCTIONS) {
-    const box = document.getElementById(
-      `log-fn-${name}`,
-    ) as HTMLInputElement | null;
-    if (!box || box.onchange) continue;
-    box.checked = selectedLogFns.has(name);
-    box.onchange = () => {
-      if (box.checked) selectedLogFns.add(name);
-      else selectedLogFns.delete(name);
-      queueLogSave();
-    };
-  }
-  const deleteLogs = document.getElementById("deleteLogFiles");
-  if (deleteLogs) deleteLogs.onclick = () => {
-    void deleteLogFiles();
-  };
-  const regTest60BlockBtn = document.getElementById(
-    "regtest60Block",
-  ) as HTMLElement | null;
-  if (regTest60BlockBtn) {
-    regTest60BlockBtn.onclick = regTest60Block;
-  }
+  const files = html`<div>${dirlist}</div>`;
   return html`<div>
     <style>
       .dir {
@@ -397,11 +317,11 @@ export function developerSettings() {
       privacy.
     </div>
     <div style="margin-bottom: 36px; margin-top: 12px">
-      <span id="exportWallet">EXPORT WALLETS</span>
+      <span id="exportWallet" onclick=${exportWallet}>EXPORT WALLETS</span>
     </div>
     <div>
       <span> type DELETE ALL FILES to reset your wallet: </span>
-      ${textInput("wipeWallet", "DELETE ALL FILES")}
+      ${textInput("wipeWallet", "DELETE ALL FILES", wipeWalletValue, wipeWalletCallback)}
     </div>
     <div style="margin-top: 85px; margin-bottom: 7px">
       inspect wallet files:
@@ -414,11 +334,11 @@ export function developerSettings() {
       be sampled, make sure coinbase miner reward becomes spendable):
     </div>
     <div style="margin-bottom: 36px; margin-top: 12px">
-      <span class="regtest-btn" id="regtestOneBlock">regtest one block</span>
-      <span class="regtest-btn" id="regtest60Block">regtest 60 blocks</span>
+      <span class="regtest-btn" id="regtestOneBlock" onclick=${regTestOneBlock}>regtest one block</span>
+      <span class="regtest-btn" id="regtest60Block" onclick=${regTest60Block}>regtest 60 blocks</span>
     </div>
     <div style="margin-bottom: 36px; margin-top: 12px">
-      <span class="regtest-btn" id="regtest1000Block">regtest 1000 blocks</span>
+      <span class="regtest-btn" id="regtest1000Block" onclick=${regTest1000Block}>regtest 1000 blocks</span>
     </div>
     ${regtestNote
       ? html`<div style="margin-bottom: 12px">${regtestNote}</div>`
@@ -426,15 +346,16 @@ export function developerSettings() {
     <div style="margin-top: 12px">log level</div>
     <div style="margin-top: 8px; margin-bottom: 12px">
       ${
-        flatten(
+        html`<div>${
           logLevels.map(
             (level) => html`<span
               class="regtest-btn ${currentLogLevel() === level ? "log-level-on" : ""}"
               id="log-level-${level}"
+              onclick=${() => setLogLevel(level)}
               >${level}</span
             >`,
-          ),
-        )
+          )
+        }</div>`
       }
     </div>
     <div style="margin-top: 12px">
@@ -442,18 +363,23 @@ export function developerSettings() {
     </div>
     <div style="margin-top: 8px; margin-bottom: 12px">
       ${
-        flatten(
+        html`<div>${
           LOGGING_FUNCTIONS.map(
             (name) => html`<label class="log-fn">
-              <input type="checkbox" id="log-fn-${name}" />
+              <input
+                type="checkbox"
+                id="log-fn-${name}"
+                checked=${selectedLogFns.has(name)}
+                onchange=${(e: Event) => toggleLogFn(name, e)}
+              />
               ${name}
             </label>`,
-          ),
-        )
+          )
+        }</div>`
       }
     </div>
     <div style="margin-bottom: 24px">
-      <span class="regtest-btn" id="deleteLogFiles">delete log files</span>
+      <span class="regtest-btn" id="deleteLogFiles" onclick=${() => void deleteLogFiles()}>delete log files</span>
     </div>
   </div>`;
 }

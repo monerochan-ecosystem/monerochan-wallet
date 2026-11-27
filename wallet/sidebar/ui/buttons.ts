@@ -1,7 +1,18 @@
-import { html, type MiniHtmlString } from "../../../mininext/mininext";
+import { html, type MiniHtmlString } from "@spirobel/mininext";
 
-export function tactileSwitch(id: string, buttonText: string | MiniHtmlString) {
-  return html`<div id="${id}" class="tactile-switch">
+export type ClickHandler = (event: MouseEvent) => unknown;
+
+export function tactileSwitch(
+  id: string,
+  buttonText: string | MiniHtmlString,
+  onclick?: ClickHandler,
+  active = false,
+) {
+  return html`<div
+    id="${id}"
+    class="tactile-switch ${active ? "active-switch" : ""}"
+    onclick=${onclick}
+  >
     ${buttonText}<style>
       .tactile-switch {
         border-radius: 3% 10% 6% 16% / 18% 72% 21% 74%;
@@ -41,39 +52,16 @@ export function tactileSwitch(id: string, buttonText: string | MiniHtmlString) {
     </style>
   </div>`;
 }
-export type IdMap = Record<string, string>;
-export function attachHandlers(
-  buttonIds: IdMap,
-  cb: (event: MouseEvent) => void,
-) {
-  for (const idKey in buttonIds) {
-    const id = buttonIds[idKey];
-    if (!id) continue;
-    const button = document.getElementById(id);
-    if (button) button.onclick = cb;
-  }
-}
-export function removeActive(buttonIds: IdMap) {
-  for (const idKey in buttonIds) {
-    const id = buttonIds[idKey];
-    if (!id) continue;
-    const button = document.getElementById(id);
-    if (button) button.classList.remove("active-switch");
-  }
-}
-export function addActive(target: HTMLElement) {
-  target.classList.add("active-switch");
-}
-
 export function actionButton(
   id: string,
   buttonText: string | MiniHtmlString,
   active: boolean = true,
+  onclick?: ClickHandler,
 ) {
   const buttonClass = active ? "action-button" : "inactive-action-button";
   const opacity = active ? 1 : 0.3;
   const cursor = active ? "pointer" : "not-allowed";
-  return html`<div id="${id}" class="${buttonClass}">
+  return html`<div id="${id}" class="${buttonClass}" onclick=${onclick}>
     ${buttonText}<style>
       .${buttonClass} {
         border-radius: 3% 10% 6% 16% / 18% 72% 21% 74%;

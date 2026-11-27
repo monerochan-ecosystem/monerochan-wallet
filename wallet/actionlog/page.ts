@@ -1,13 +1,18 @@
 import {
+  canRebroadcastTx,
+  canReleaseInputs,
   getToolUiByPermissions,
+  txFailed,
   type ActionLogEvent,
   type InvocationState,
   type TxLog,
 } from "@spirobel/monero-wallet-api/unpacked";
-import { flatten, html, type MiniHtmlString } from "../../mininext/mininext";
-import { actionLog, actionLogHeight, actionLogWallets } from "./init";
+import { html, type MiniHtmlString } from "@spirobel/mininext";
+import { actionLog, actionLogHeight, actionLogWallets, actionLogWalletsOpened } from "./init";
 import { router } from "./router";
 import { formatConfirmationEta, minedSpendHeight, txLogConfirmationEta } from "../sidebar/segments/toolInfo";
+import { doubleSpendWarning, failedSendState, handoverRetryHint, selfSpendInputs, sendFailureMessage } from "../failedSend";
+import { openSelfSpend } from "./open";
 
 export type LogWallet = {
   primary_address: string;
@@ -64,8 +69,11 @@ const PAGE_SIZE = 5;
 type TxLogRow = {
   wallet: string;
   log: TxLog & { index: number };
+  inputsReserved: boolean;
   minedHeight?: number;
 };
+
+let txlogRecovery: { key: string; open: boolean; confirm: boolean; pending: boolean; error: string; rebroadcast?: "pending" | "submitted" } | undefined;
 
 function txLogs(): TxLogRow[] {
   return actionLogWallets().flatMap((wallet) => {
@@ -79,6 +87,7 @@ function txLogs(): TxLogRow[] {
       return {
         wallet: wallet.primary_address,
         log: { ...log, index },
+        inputsReserved: txFailed(log) && failedSendState(cache, index, []).locked,
         minedHeight: minedSpendHeight(inputs),
       };
     });
@@ -180,6 +189,14 @@ const styles = html`<style>
   .log-info .log-jump {
     margin-bottom: 4px;
   }
+  .log-recovery { margin-top: 16px; }
+  .log-recovery > summary { cursor: pointer; }
+  .log-recovery button { background: transparent; font: inherit; }
+  .log-recovery button:disabled { cursor: default; opacity: .65; }
+  .log-rebroadcast { display: inline-grid; }
+  .log-rebroadcast::before { content: "rebroadcast"; visibility: hidden; }
+  .log-rebroadcast::before, .log-rebroadcast span { grid-area: 1 / 1; }
+  .log-recovery p, .log-recovery details { margin-top: 8px; }
   .log-row {
     border: 2px solid rgba(255, 255, 255, 0.2);
     border-radius: 4px;
@@ -212,6 +229,7 @@ const styles = html`<style>
     user-select: none;
     color: rgba(255, 255, 255, 0.5);
   }
+  .log-events > summary { cursor: pointer; }
   .log-event {
     font-size: 13px;
     margin-top: 6px;
@@ -351,6 +369,7 @@ function openTxRow(row: TxLogRow) {
 }
 
 function txStatus(log: TxLogRow["log"]): string {
+  if (log.broadcast_accepted) return "OK";
   if (!log.sendResult && !log.error) return "sent tx to node";
   if (log.sendResult?.status) return log.sendResult.status;
   if (log.error) return "failed";
@@ -371,17 +390,11 @@ function txlogItem(row: TxLogRow) {
   const payments = (log.payments ?? [])
     .map((p) => `${p.amount ?? ""} ${p.address ?? ""}`)
     .join(" | ");
-  const jump = document.getElementById(toolBtn);
-  if (jump && log.invocationId) {
-    const invocationId = log.invocationId;
-    jump.onclick = (ev) => {
-      ev.stopPropagation();
-      openToolCall(invocationId);
-    };
-  }
-  return html`<div class="log-row" id="${id}">
+  const invocationId = log.invocationId;
+  return html`<div class="log-row" id="${id}" onclick=${() => openTxRow(row)}>
     <div class="log-status">${txStatus(log)}</div>
     <div>${formatTime(log.timestamp)}</div>
+    ${row.inputsReserved ? html`<div class="log-meta">inputs reserved</div>` : ""}
     <div class="log-meta">
       ${log.error ?? ""} ${payments}
       ${log.inputs_index?.length
@@ -391,64 +404,93 @@ function txlogItem(row: TxLogRow) {
     </div>
     ${txEtaLine(row)}
     ${log.invocationId
-      ? html`<div class="log-jump" id="${toolBtn}">tool call</div>`
+      ? html`<div
+          class="log-jump"
+          id="${toolBtn}"
+          onclick=${(ev: Event) => {
+            ev.stopPropagation();
+            if (invocationId) openToolCall(invocationId);
+          }}
+        >
+          tool call
+        </div>`
       : ""}
   </div>`;
 }
 
 function walletDropdown(): MiniHtmlString {
-  const select = document.getElementById("log-wallet") as HTMLSelectElement | null;
-  if (select) {
-    const options = walletFilterOptions(actionLogWallets());
-    // Set native options directly. The renderer uses spans for dynamic text.
-    if (
-      select.options.length !== options.length ||
-      options.some((option, index) =>
-        select.options[index]?.value !== option.value ||
-        select.options[index]?.text !== option.label,
-      )
-    ) {
-      select.replaceChildren(
-        ...options.map((option) => new Option(option.label, option.value)),
-      );
-    }
-    if (select.value !== walletFilter) select.value = walletFilter;
-    select.title = select.selectedOptions[0]?.text ?? "";
-    select.onfocus = () => {
+  const options = walletFilterOptions(actionLogWallets());
+  const chosen = options.find((option) => option.value === walletFilter);
+  return html`<select
+    class="log-wallet-filter"
+    id="log-wallet"
+    aria-label="wallet"
+    title="${chosen?.label ?? ""}"
+    onfocus=${() => {
       pageInputFocused = false;
-    };
-    select.onchange = () => {
-      walletFilter = select.value;
+    }}
+    onchange=${(ev: Event) => {
+      walletFilter = (ev.currentTarget as HTMLSelectElement).value;
       logPage = 1;
       pageInputFocused = false;
-    };
-  }
-  return html`<select class="log-wallet-filter" id="log-wallet" aria-label="wallet"></select>`;
+    }}
+  >
+    ${options.map(
+      (option) =>
+        html`<option value="${option.value}" selected=${option.value === walletFilter}>
+          ${option.label}
+        </option>`,
+    )}
+  </select>`;
 }
 
-function attachListHandlers(pages: number) {
-  const tabs: LogTab[] = ["history", "success", "discarded", "txlog"];
-  for (const tab of tabs) {
-    const el = document.getElementById(`log-tab-${tab}`);
-    if (el)
-      el.onclick = () => {
-        pageInputFocused = false;
-        logTab = tab;
-        logPage = 1;
-      };
+function chooseTab(tab: LogTab) {
+  pageInputFocused = false;
+  logTab = tab;
+  logPage = 1;
+}
+function turnPage(page: number) {
+  pageInputFocused = false;
+  logPage = page;
+}
+function typePage(ev: Event, pages: number) {
+  const n = parseInt((ev.currentTarget as HTMLInputElement).value, 10);
+  if (!Number.isFinite(n)) return;
+  logPage = Math.min(pages, Math.max(1, n));
+}
+// two arrow presses at the edge of the page field leave it, so the arrows turn pages again
+function pageFieldKeys(ev: KeyboardEvent) {
+  const input = ev.currentTarget as HTMLInputElement;
+  if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") {
+    edgeLeftCount = 0;
+    edgeRightCount = 0;
+    return;
   }
-  const prev = document.getElementById("log-prev");
-  if (prev)
-    prev.onclick = () => {
+  const pos = input.selectionStart ?? 0;
+  const collapsed = pos === (input.selectionEnd ?? 0);
+  if (ev.key === "ArrowLeft" && collapsed && pos <= 0) {
+    edgeLeftCount += 1;
+    edgeRightCount = 0;
+    if (edgeLeftCount >= 2) {
+      edgeLeftCount = 0;
       pageInputFocused = false;
-      logPage = Math.max(1, logPage - 1);
-    };
-  const next = document.getElementById("log-next");
-  if (next)
-    next.onclick = () => {
+      input.blur();
+    }
+  } else if (ev.key === "ArrowRight" && collapsed && pos >= input.value.length) {
+    edgeRightCount += 1;
+    edgeLeftCount = 0;
+    if (edgeRightCount >= 2) {
+      edgeRightCount = 0;
       pageInputFocused = false;
-      logPage = Math.min(pages, logPage + 1);
-    };
+      input.blur();
+    }
+  } else {
+    edgeLeftCount = 0;
+    edgeRightCount = 0;
+  }
+}
+
+function listKeys(pages: number) {
   document.onkeydown = (ev) => {
     const tag = (ev.target as HTMLElement | null)?.tagName;
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
@@ -473,53 +515,11 @@ function attachListHandlers(pages: number) {
     logTab = tab;
     logPage = 1;
   };
+  // a rebuilt page field gets the focus back
   const input = document.getElementById("log-page") as HTMLInputElement | null;
-  if (input) {
-    input.onfocus = () => {
-      pageInputFocused = true;
-    };
-    input.oninput = () => {
-      const n = parseInt(input.value, 10);
-      if (!Number.isFinite(n)) return;
-      logPage = Math.min(pages, Math.max(1, n));
-    };
-    input.onkeydown = (ev) => {
-      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") {
-        edgeLeftCount = 0;
-        edgeRightCount = 0;
-        return;
-      }
-      const pos = input.selectionStart ?? 0;
-      const collapsed = pos === (input.selectionEnd ?? 0);
-      if (ev.key === "ArrowLeft" && collapsed && pos <= 0) {
-        edgeLeftCount += 1;
-        edgeRightCount = 0;
-        if (edgeLeftCount >= 2) {
-          edgeLeftCount = 0;
-          pageInputFocused = false;
-          input.blur();
-        }
-      } else if (
-        ev.key === "ArrowRight" &&
-        collapsed &&
-        pos >= input.value.length
-      ) {
-        edgeRightCount += 1;
-        edgeLeftCount = 0;
-        if (edgeRightCount >= 2) {
-          edgeRightCount = 0;
-          pageInputFocused = false;
-          input.blur();
-        }
-      } else {
-        edgeLeftCount = 0;
-        edgeRightCount = 0;
-      }
-    };
-    if (pageInputFocused && document.activeElement !== input) {
-      input.focus();
-      input.setSelectionRange(input.value.length, input.value.length);
-    }
+  if (input && pageInputFocused && document.activeElement !== input) {
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
   }
 }
 
@@ -547,23 +547,13 @@ function listPage(): MiniHtmlString {
           const id = `row-${row.invocationId}`;
           const tx = txlogForInvocation(row.invocationId, logs);
           const txBtn = `txbtn-${row.invocationId}`;
-          const el = document.getElementById(id);
-          if (el) {
-            el.onclick = () => {
-              pageInputFocused = false;
-              router.navigate("/invo/:invocationId", {
-                invocationId: row.invocationId,
-              });
-            };
-          }
-          const jump = document.getElementById(txBtn);
-          if (jump && tx) {
-            jump.onclick = (ev) => {
-              ev.stopPropagation();
-              openTxRow(tx);
-            };
-          }
-          return html`<div class="log-row" id="${id}">
+          const openRow = () => {
+            pageInputFocused = false;
+            router.navigate("/invo/:invocationId", {
+              invocationId: row.invocationId,
+            });
+          };
+          return html`<div class="log-row" id="${id}" onclick=${openRow}>
       <div class="log-status">${row.status}</div>
       <div>${titleFor(row)}</div>
       <div class="log-meta">
@@ -574,32 +564,54 @@ function listPage(): MiniHtmlString {
           : ""}
       </div>
       ${row.toolId === "001" && tx ? txEtaLine(tx) : ""}
-      ${tx ? html`<div class="log-jump" id="${txBtn}">txlog</div>` : ""}
+      ${tx
+        ? html`<div
+            class="log-jump"
+            id="${txBtn}"
+            onclick=${(ev: Event) => {
+              ev.stopPropagation();
+              openTxRow(tx);
+            }}
+          >
+            txlog
+          </div>`
+        : ""}
     </div>`;
         });
-  attachListHandlers(pages);
+  listKeys(pages);
   return html`<div class="log-page">
     ${styles}
     <div class="log-top">
       <div class="log-title">action log</div>
       <div class="log-pager">
-        <input class="log-page-input" id="log-page" value="${logPage}" maxlength="3" inputmode="numeric" />
-        <div class="log-page-btn" id="log-prev">&lt;</div>
-        <div class="log-page-btn" id="log-next">&gt;</div>
+        <input
+          class="log-page-input"
+          id="log-page"
+          value="${logPage}"
+          maxlength="3"
+          inputmode="numeric"
+          onfocus=${() => {
+            pageInputFocused = true;
+          }}
+          oninput=${(ev: Event) => typePage(ev, pages)}
+          onkeydown=${pageFieldKeys}
+        />
+        <div class="log-page-btn" id="log-prev" onclick=${() => turnPage(Math.max(1, logPage - 1))}>&lt;</div>
+        <div class="log-page-btn" id="log-next" onclick=${() => turnPage(Math.min(pages, logPage + 1))}>&gt;</div>
       </div>
     </div>
     ${total
-      ? flatten(items)
+      ? html`<div>${items}</div>`
       : html`<div class="log-empty">${isTx ? "no sends" : "no tool calls"}</div>`}
     ${walletFilter && !isTx
       ? html`<div class="log-meta">Calls with no wallet are shown under all wallets.</div>`
       : ""}
     <div class="log-tabs">
-      <div class="log-tab${logTab === "history" ? " log-tab-active" : ""}" id="log-tab-history">history</div>
-      <div class="log-tab${logTab === "success" ? " log-tab-active" : ""}" id="log-tab-success">success</div>
-      <div class="log-tab${logTab === "discarded" ? " log-tab-active" : ""}" id="log-tab-discarded">discarded</div>
+      <div class="log-tab${logTab === "history" ? " log-tab-active" : ""}" id="log-tab-history" onclick=${() => chooseTab("history")}>history</div>
+      <div class="log-tab${logTab === "success" ? " log-tab-active" : ""}" id="log-tab-success" onclick=${() => chooseTab("success")}>success</div>
+      <div class="log-tab${logTab === "discarded" ? " log-tab-active" : ""}" id="log-tab-discarded" onclick=${() => chooseTab("discarded")}>discarded</div>
       <div class="log-tx-controls">
-        <div class="log-tab${logTab === "txlog" ? " log-tab-active" : ""}" id="log-tab-txlog">txlog</div>
+        <div class="log-tab${logTab === "txlog" ? " log-tab-active" : ""}" id="log-tab-txlog" onclick=${() => chooseTab("txlog")}>txlog</div>
         ${walletDropdown()}
       </div>
     </div>
@@ -641,6 +653,11 @@ function invoRows(head?: InvocationState | null): MiniHtmlString[] {
   if (!head) return [];
   const rows: MiniHtmlString[] = [];
   addInfoRow(rows, "error", head.error);
+  const handover = [...head.events].reverse().find((event) => event.handover)?.handover as { ok?: boolean; error?: string } | undefined;
+  if (handover) {
+    addInfoRow(rows, "merchant handover", handover.ok ? "done" : "failed");
+    addInfoRow(rows, "handover error", handover.error);
+  }
   addInfoRow(rows, "amount", head.amount);
   addInfoRow(rows, "address", head.address);
   addInfoRow(rows, "from", head.wallet_to_send_from_pa);
@@ -662,7 +679,7 @@ function invoInfo(
   extra?: MiniHtmlString,
 ): MiniHtmlString {
   if (!rows.length && !extra) return html``;
-  return html`<div class="log-info">${flatten(rows)}${extra ?? ""}</div>`;
+  return html`<div class="log-info">${html`<div>${rows}</div>`}${extra ?? ""}</div>`;
 }
 
 function txInfoRows(log: TxLog, wallet: string): MiniHtmlString[] {
@@ -672,7 +689,7 @@ function txInfoRows(log: TxLog, wallet: string): MiniHtmlString[] {
     .map((payment) => `${payment.amount ?? ""} ${payment.address ?? ""}`)
     .join(" | ");
   addInfoRow(rows, "result", [log.error ?? "", payments].filter(Boolean).join(" "));
-  addInfoRow(rows, "inputs", (log.inputs_index ?? []).join(", "));
+  addInfoRow(rows, "input indexes", (log.inputs_index ?? []).join(", "));
   addInfoRow(rows, "wallet", wallet);
   return rows;
 }
@@ -683,13 +700,7 @@ function goHome() {
 
 function detailPage(invocationId: string): MiniHtmlString {
   document.onkeydown = null;
-  const home = document.getElementById("log-home");
-  if (home) home.onclick = goHome;
-  const back = document.getElementById("log-back");
-  if (back) back.onclick = goHome;
   const tx = txlogForInvocation(invocationId, txLogs());
-  const txBtn = document.getElementById("open-txlog");
-  if (txBtn && tx) txBtn.onclick = () => openTxRow(tx);
 
   const head =
     (actionLog()?.invocations() ?? []).find(
@@ -697,63 +708,126 @@ function detailPage(invocationId: string): MiniHtmlString {
     ) ?? null;
   const evs = head?.events ?? [];
   const status = head?.status ?? "";
+  const retryHint = handoverRetryHint(head, actionLogWallets());
+  const retry = () => void actionLog()?.execute(invocationId, { retryHandover: true });
 
   return html`<div class="log-page">
     ${styles}
-    <div class="log-home" id="log-home">action log</div>
+    <div class="log-home" id="log-home" onclick=${goHome}>action log</div>
     <div class="log-title">${head ? titleFor(head) : "tool call"}</div>
     <div class="log-status">${status}</div>
     ${invoInfo(
       invoRows(head),
-      tx ? html`<div class="log-jump" id="open-txlog">txlog</div>` : undefined,
+      tx
+        ? html`<div class="log-jump" id="open-txlog" onclick=${() => openTxRow(tx)}>txlog</div>`
+        : undefined,
     )}
     ${head?.toolId === "001" && tx ? txEtaLine(tx) : ""}
+    ${retryHint ? html`<div id="handover-hint">${retryHint}
+      <div class="log-jump" id="retry-handover" onclick=${retry}>retry handover</div></div>` : html`<span hidden></span>`}
     ${evs.length
-      ? flatten(evs.map(eventLine))
+      ? html`<details class="log-events">
+          <summary>events</summary>
+          ${evs.map(eventLine)}
+        </details>`
       : html`<div class="log-empty">no events</div>`}
-    <div class="log-back" id="log-back">back</div>
+    <div class="log-back" id="log-back" onclick=${goHome}>back</div>
   </div>`;
+}
+
+function txRecoveryActions(row: TxLogRow) {
+  const wallets = actionLogWalletsOpened();
+  if (!wallets) return "";
+  const wallet = wallets.wallets.find((wallet) => wallet.primary_address === row.wallet);
+  if (!wallet) return "";
+  const canRelease = canReleaseInputs(wallet.cache, row.log.index);
+  const canRebroadcast = canRebroadcastTx(wallet.cache, row.log.index);
+  const canSelfSpend = wallet.wallet_route && selfSpendInputs(wallet.cache, row.log.index).length > 0;
+
+  const key = `${row.wallet}:${row.log.index}`;
+  if (txlogRecovery?.key !== key) txlogRecovery = { key, open: txFailed(row.log), confirm: false, pending: false, error: "" };
+  const state = txlogRecovery;
+  const showRebroadcast = canRebroadcast || state.rebroadcast;
+  if (!canRelease && !showRebroadcast && !canSelfSpend && !state.error) return "";
+  const rebroadcastLabel = state.rebroadcast === "pending" ? "sending…" : state.rebroadcast ?? "rebroadcast";
+  const params = { primary_address: row.wallet, tx_log_index: row.log.index };
+  async function recover(action: () => Promise<unknown>, rebroadcast = false) {
+    if (state.pending) return;
+    state.pending = true;
+    state.error = "";
+    state.rebroadcast = rebroadcast ? "pending" : undefined;
+    try {
+      await action();
+      state.confirm = false;
+      if (rebroadcast) state.rebroadcast = "submitted";
+    } catch (error) {
+      state.error = sendFailureMessage(error);
+      state.rebroadcast = undefined;
+    } finally {
+      state.pending = false;
+    }
+  }
+
+  return html`<details class="log-recovery" id="txlog-actions" open=${state.open}>
+    <summary onclick=${(event: Event) => { event.preventDefault(); state.open = !state.open; }}>actions</summary>
+    ${canRelease ? html`<p>The inputs for this transaction are reserved.</p>` : ""}
+    ${showRebroadcast ? html`<button type="button" class="log-jump log-rebroadcast" id="txlog-rebroadcast" disabled=${state.pending || !canRebroadcast} onclick=${() => void recover(() => wallets.rebroadcastTx(params), true)}><span aria-live="polite">${rebroadcastLabel}</span></button>` : ""}
+    ${canRelease && !state.confirm ? html`<button type="button" class="log-jump" id="txlog-free-inputs" disabled=${state.pending} onclick=${() => { state.confirm = true; }}>free inputs</button>` : ""}
+    ${canSelfSpend ? html`<button type="button" class="log-jump" id="txlog-self-spend" aria-describedby="txlog-self-spend-hint" disabled=${state.pending} onclick=${() => void recover(() => openSelfSpend(row.wallet, row.log.index))}>self spend</button>
+    <p id="txlog-self-spend-hint">Prepare a new payment to this wallet with the listed inputs.${canRelease ? " Free them before you send." : ""}</p>` : ""}
+    ${canRelease && state.confirm ? html`<div id="txlog-release-confirmation">
+      <p>The original transaction can still be accepted after you free its inputs.</p>
+      <details><summary>why a new spend can affect privacy</summary><p>${doubleSpendWarning}</p></details>
+      <button type="button" class="log-jump" id="txlog-confirm-release" disabled=${state.pending} onclick=${() => void recover(() => wallets.releaseInputs(params))}>confirm</button>
+      <button type="button" class="log-jump" id="txlog-cancel-release" disabled=${state.pending} onclick=${() => { state.confirm = false; }}>cancel</button>
+    </div>` : ""}
+    ${row.log.inputs_unlocked ? html`<p>inputs released</p>` : ""}
+    ${state.error ? html`<p role="alert">${state.error}</p>` : ""}
+  </details>`;
 }
 
 function txlogPage(wallet: string, index: string): MiniHtmlString {
   document.onkeydown = null;
-  const home = document.getElementById("log-home");
-  if (home) home.onclick = goHome;
-  const back = document.getElementById("log-back");
-  if (back) back.onclick = goHome;
   const row =
     txLogs().find(
       (item) => item.wallet === wallet && String(item.log.index) === index,
     ) ?? null;
-  const toolBtn = document.getElementById("open-tool-call");
-  if (toolBtn && row?.log.invocationId) {
-    const invocationId = row.log.invocationId;
-    toolBtn.onclick = () => openToolCall(invocationId);
-  }
+  const toolCallId = row?.log.invocationId;
   const log = row?.log;
   return html`<div class="log-page">
     ${styles}
-    <div class="log-home" id="log-home">action log</div>
+    <div class="log-home" id="log-home" onclick=${goHome}>action log</div>
     <div class="log-title">txlog</div>
     <div class="log-status">${log ? txStatus(log) : ""}</div>
     ${log
       ? invoInfo(
           txInfoRows(log, wallet),
           log.invocationId
-            ? html`<div class="log-jump" id="open-tool-call">tool call</div>`
+            ? html`<div
+                class="log-jump"
+                id="open-tool-call"
+                onclick=${() => {
+                  if (toolCallId) openToolCall(toolCallId);
+                }}
+              >
+                tool call
+              </div>`
             : undefined,
         )
       : html`<div class="log-empty">no send</div>`}
     ${row ? txEtaLine(row) : ""}
-    <div class="log-back" id="log-back">back</div>
+    ${row ? txRecoveryActions(row) : ""}
+    <div class="log-back" id="log-back" onclick=${goHome}>back</div>
   </div>`;
 }
 
 export function actionLogList() {
+  txlogRecovery = undefined;
   return listPage();
 }
 
 export function actionLogDetail(params: { invocationId: string }) {
+  txlogRecovery = undefined;
   return detailPage(params.invocationId);
 }
 

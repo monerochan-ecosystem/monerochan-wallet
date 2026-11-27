@@ -5,18 +5,24 @@ import {
   type ParseAddressError,
   type ParsedAddress,
 } from "@spirobel/monero-wallet-api/unpacked";
-import { html, type MiniHtmlString } from "../../../mininext/mininext";
-import { actionButton, removeActive } from "../ui/buttons";
+import { html, type MiniHtmlString } from "@spirobel/mininext";
+import { actionButton } from "../ui/buttons";
 import { leftUpper, tactileContentPlate } from "../ui/content";
 import {
   addressPreviewLine,
   coinControlIsOn,
   coinControlSendReady,
   coinControlView,
+  coinControlFields,
+  failedSendView,
+  dismissSendNotices,
+  sendModeSelector,
   forceStandardMode,
   noteStandardDraft,
   resetCoinControl,
+  selfSpendIsOn,
   selectedAmountLine,
+  setSendError,
   setSpendDismissHandler,
   submitCoinControl,
   takeReleasedDraft,
@@ -33,6 +39,7 @@ import type {
 import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/unpacked";
 import { openActionLogPage, toggleActionLogPage } from "../../actionlog/open";
 import { formatTime, toolInfo, validityMessage } from "./toolInfo";
+import { handoverRetryHint, sendStatus } from "../../failedSend";
 
 // the send plate is per wallet route. keep its state per route too.
 type SendDraft = {
@@ -60,13 +67,9 @@ setSpendDismissHandler(async (invocationId) => {
   ignoredSpendId = invocationId;
   await window.wallets?.actionLogOpened?.dismiss(invocationId);
 });
-export function parseAmountCallback() {
-  const amountInput = document.getElementById(
-    "amountInput",
-  ) as HTMLInputElement | null;
-  if (!amountInput) return;
-  draft().amountAtomic = convertAmountBigInt(amountInput.value);
-  draft().amount = amountInput.value;
+export function parseAmountCallback(value = draft().amount) {
+  draft().amountAtomic = convertAmountBigInt(value);
+  draft().amount = value;
 }
 
 export function walletUnlocked(): boolean {
@@ -104,7 +107,7 @@ async function sendCallback() {
   // safe side of the top slider. fire is the only side that may send.
   if (!walletUnlocked()) return;
   if (coinControlIsOn()) {
-    const open = spendOpen();
+    const open = selfSpendIsOn() ? null : spendOpen();
     await submitCoinControl(
       markJustSent,
       async (invocationId) => {
@@ -162,8 +165,9 @@ async function resetCallback() {
   if (pa) {
     sentUntil.delete(pa);
     const latest = latestLog(pa);
-    if (latest) dismissedStatus.set(pa, latest.timestamp);
-    await window.wallets?.dismissSendPlate({ primary_address: pa });
+    if (await dismissSendNotices(undefined, pa)) {
+      if (latest) dismissedStatus.set(pa, latest.timestamp);
+    }
   }
   readLastTxLog();
 }
@@ -183,36 +187,12 @@ function latestLog(pa: string): TxLog | null {
 let last_tx_log: TxLog | null = null;
 function readLastTxLog() {
   last_tx_log = latestLog(currentlySelectedWallet()?.primary_address ?? "");
-  setTXlogStatusMsg();
+  const status = last_tx_log && sendStatus(last_tx_log);
+  lastTxLogMessage = status ? status.message + " " + formatTime(last_tx_log!.timestamp) : "";
+  lastTxLogMessageClass = status ? "txlog-" + status.style : "";
 }
 let lastTxLogMessage = "";
 let lastTxLogMessageClass = "";
-function setTXlogStatusMsg() {
-  lastTxLogMessage = "";
-  lastTxLogMessageClass = "";
-  if (!last_tx_log) return;
-  // the first tx log write has no node answer yet. that is not a failure.
-  if (!last_tx_log.sendResult && !last_tx_log.error) {
-    lastTxLogMessage =
-      "sent tx to node " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-neutral";
-    return;
-  }
-  if (last_tx_log.sendResult?.status === "OK") {
-    lastTxLogMessage =
-      "successfully sent transaction " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-success";
-    return;
-  }
-  if (last_tx_log.error && last_tx_log.error.includes("not enough funds")) {
-    lastTxLogMessage = "not enough funds " + formatTime(last_tx_log.timestamp);
-    lastTxLogMessageClass = "txlog-error";
-    return;
-  }
-  lastTxLogMessage =
-    "failed to send transaction " + formatTime(last_tx_log.timestamp);
-  lastTxLogMessageClass = "txlog-error";
-}
 function clearSendForm(invocationId?: string | null, key = routeKey()) {
   if (invocationId) ignoredSpendId = invocationId;
   resetCoinControl();
@@ -221,20 +201,6 @@ function clearSendForm(invocationId?: string | null, key = routeKey()) {
   row.amountAtomic = null;
   row.address = "";
   row.parsed = null;
-  const amountInput = document.getElementById(
-    "amountInput",
-  ) as HTMLInputElement | null;
-  if (amountInput) {
-    amountInput.value = "";
-    amountInput.disabled = false;
-  }
-  const addressInput = document.getElementById(
-    "addressInput",
-  ) as HTMLInputElement | null;
-  if (addressInput) {
-    addressInput.value = "";
-    addressInput.disabled = false;
-  }
 }
 async function resetSendInputs(key = routeKey()) {
   const open = spendOpen();
@@ -244,35 +210,44 @@ async function resetSendInputs(key = routeKey()) {
   }
   clearSendForm(undefined, key);
 }
-export async function parseAddressCallback() {
-  const addressInput = document.getElementById(
-    "addressInput",
-  ) as HTMLInputElement | null;
-  if (!addressInput) return;
-  draft().parsed = await parseAddress(addressInput.value.trim());
-  draft().address = addressInput.value;
+export async function parseAddressCallback(value = draft().address) {
+  const row = draft();
+  row.address = value;
+  row.parsed = null;
+  const parsed = await parseAddress(value.trim());
+  if (row.address === value) row.parsed = parsed;
+}
+function inputValue(event: Event) {
+  return (event.target as HTMLInputElement).value;
 }
 function executedHintMarkup() {
   const wallet = currentlySelectedWallet()?.primary_address ?? "";
   const executedSpendId = executedHint.get(wallet);
   if (!executedSpendId) return "";
-  const dismissExecuted = document.getElementById("dismissExecuted");
-  if (dismissExecuted) {
-    dismissExecuted.onclick = () => {
-      executedHint.delete(wallet);
-    };
-  }
-  const visitExecuted = document.getElementById("visitExecuted");
-  if (visitExecuted) {
-    const visitId = executedSpendId;
-    visitExecuted.onclick = () => {
-      void openActionLogPage(visitId);
-    };
-  }
+  const log = window.wallets?.actionLogOpened;
+  const retryHint = handoverRetryHint(
+    log?.invocations().find((item) => item.invocationId === executedSpendId),
+    window.wallets?.wallets ?? [],
+  );
   return html`<div class="executed-hint">
-    tool call executed
-    <span class="tool-action" id="visitExecuted">visit</span>
-    <span class="tool-action" id="dismissExecuted">dismiss</span>
+    ${retryHint || "tool call executed"}
+    ${retryHint
+      ? html`<span class="tool-action" id="retryHandover" onclick=${() => void log?.execute(executedSpendId, { retryHandover: true })}>retry handover</span>`
+      : ""}
+    <span
+      class="tool-action"
+      id="visitExecuted"
+      onclick=${() => void openActionLogPage(executedSpendId)}
+      >visit</span
+    >
+    <span
+      class="tool-action"
+      id="dismissExecuted"
+      onclick=${() => {
+        executedHint.delete(wallet);
+      }}
+      >dismiss</span
+    >
   </div>`;
 }
 export function sendPlateContent() {
@@ -283,6 +258,7 @@ export function sendPlateContent() {
     row.address = released.address;
     row.amountAtomic = released.amountAtomic;
     row.parsed = released.parsed;
+    if (row.address && !row.parsed) void parseAddressCallback(row.address);
   }
   noteStandardDraft({
     amount: row.amount,
@@ -290,7 +266,7 @@ export function sendPlateContent() {
     amountAtomic: row.amountAtomic,
     parsed: row.parsed,
   });
-  const raw = spendOpen();
+  const raw = selfSpendIsOn() ? null : spendOpen();
   if (raw && raw.invocationId !== ignoredSpendId) ignoredSpendId = null;
   const open =
     raw && raw.invocationId === ignoredSpendId ? null : raw;
@@ -302,71 +278,23 @@ export function sendPlateContent() {
 
   const toolInfoSnippet = toolInfo(open);
   const validitySnippet = validityMessage(open);
-  const amountInput = document.getElementById(
-    "amountInput",
-  ) as HTMLInputElement | null;
-
-  if (amountInput) {
+  // the amount field shows only in standard mode. the tool sync runs only then too.
+  // the open call fills and locks the fields. a shown call that ends outside the plate clears its values.
+  if (!coinControlIsOn()) {
     const newSpend = !!open && open.invocationId !== lastSpendId;
+    const ended = !open && lastSpendId
+      ? window.wallets?.actionLogOpened?.invocations().find((item) => item.invocationId === lastSpendId)
+      : undefined;
+    if (ended && row.address === ended.address) clearSendForm();
     lastSpendId = open?.invocationId ?? null;
-    amountInput.oninput = parseAmountCallback;
-    if (amountInput.value.length === 0 && row.amount.length > 0) {
-      amountInput.value = row.amount;
-      parseAmountCallback();
-    }
-    if (toolAmount != null) {
-      row.amount = convertBigIntAmount(toolAmount);
-      amountInput.value = row.amount;
-      parseAmountCallback();
-      amountInput.disabled = true;
-    } else if (open && (amountInput.disabled || newSpend)) {
-      amountInput.value = "";
-      amountInput.disabled = false;
-      parseAmountCallback();
-    }
-  }
-  const addressInput = document.getElementById(
-    "addressInput",
-  ) as HTMLInputElement | null;
-
-  if (addressInput) {
-    addressInput.oninput = parseAddressCallback;
-    if (addressInput.value.length === 0 && row.address.length > 0) {
-      addressInput.value = row.address;
-    }
-    if (open?.address) {
-      row.address = open.address;
-      addressInput.value = row.address;
-      parseAddressCallback();
-      addressInput.disabled = true;
-    }
+    if (toolAmount != null) parseAmountCallback(convertBigIntAmount(toolAmount));
+    else if (newSpend) parseAmountCallback("");
+    if (open?.address && row.address !== open.address) void parseAddressCallback(open.address);
   }
   const parsedAmountBiggerThanAvailable =
     (row.amountAtomic || 0n) > (currentlySelectedWallet()?.amount || 1n)
       ? "exceeds unlocked funds"
       : "";
-  const sendBtn = document.getElementById("send-action") as HTMLButtonElement;
-  if (sendBtn) {
-    sendBtn.onclick = sendCallback;
-  }
-  const resetBtn = document.getElementById("reset-send") as HTMLButtonElement;
-  if (resetBtn) {
-    resetBtn.onclick = resetCallback;
-  }
-  const logBtn = document.getElementById("openActionLog");
-  if (logBtn) {
-    logBtn.onclick = () => toggleActionLogPage();
-  }
-  const historyBtn = document.getElementById("openHistoryPlate");
-  if (historyBtn) {
-    historyBtn.onclick = () => {
-      removeActive(lowerButtonIds);
-      window.activeWalletPlate = lowerButtonIds.history;
-      const tab = document.getElementById(lowerButtonIds.history);
-      if (tab) tab.classList.add("active-switch");
-    };
-  }
-
   const standardAmount = coinControlIsOn()
     ? ""
     : html`<div class="input-block">
@@ -375,27 +303,27 @@ export function sendPlateContent() {
           id="amountInput"
           class="send-input-element"
           placeholder="Enter amount"
+          value="${row.amount}"
+          disabled=${toolAmount != null}
+          oninput=${(e: Event) => parseAmountCallback(inputValue(e))}
         />
         ${selectedAmountLine(row.amountAtomic, parsedAmountBiggerThanAvailable)}
       </div>`;
-  const standardAddress = coinControlIsOn()
-    ? ""
-    : html`<div style="display: contents;">
-        <input
-          type="text"
-          id="addressInput"
-          class="send-input-element"
-          placeholder="Enter address"
-        />
-        ${addressPreviewLine(
-          row.address,
-          row.parsed,
-          toolInfoSnippet !== "",
-        )}
-      </div>`;
-  return html`<div class="send-plate-container">
+  const inputFields = coinControlIsOn() ? coinControlFields() : html`<div class="input-block cc-output-fields">
     ${standardAmount}
-    <div class="input-block">
+    <input
+      type="text"
+      id="addressInput"
+      class="send-input-element"
+      placeholder="Enter address"
+      value="${row.address}"
+      disabled=${!!open?.address}
+      oninput=${(e: Event) => void parseAddressCallback(inputValue(e))}
+    />
+    <div class="cc-output-label" aria-hidden="true"></div>
+  </div>`;
+  return html`<div class="send-plate-container">
+    <div class="input-block send-details">
       <style>
         .send-plate-container {
           height: 100%;
@@ -416,6 +344,12 @@ export function sendPlateContent() {
           align-items: stretch;
           justify-content: flex-start;
           gap: 8px;
+        }
+        .send-details {
+          flex: 1;
+          min-height: 0;
+          overflow-y: auto;
+          padding-right: 2px;
         }
         .send-input-element {
           color: white;
@@ -441,9 +375,8 @@ export function sendPlateContent() {
           color: white;
         }
         .tool-actions {
-          position: absolute;
-          right: 8px;
-          bottom: 46px;
+          flex: none;
+          margin: 12px 8px 46px 0;
           display: flex;
           flex-direction: column;
           align-items: flex-end;
@@ -475,18 +408,30 @@ export function sendPlateContent() {
         }
       </style>
 
-      ${standardAddress}
+      <div class="send-entry-fields">${inputFields}</div>
+      ${sendModeSelector(!!open)}
+      ${coinControlIsOn() ? "" : addressPreviewLine(row.address, row.parsed, toolInfoSnippet !== "")}
       ${coinControlIsOn() ? "" : toolInfoSnippet}
       ${coinControlIsOn() ? "" : validitySnippet}
       ${coinControlView()}
+      ${failedSendView()}
+    </div>
       <div class="tool-actions">
         ${executedHintMarkup()}
         <div class="tool-action-row">
-          <span class="tool-action" id="openActionLog">actionlog</span>
-          <span class="tool-action" id="openHistoryPlate">history</span>
+          <span class="tool-action" id="openActionLog" onclick=${() => toggleActionLogPage()}
+            >actionlog</span
+          >
+          <span
+            class="tool-action"
+            id="openHistoryPlate"
+            onclick=${() => {
+              window.activeWalletPlate = lowerButtonIds.history;
+            }}
+            >history</span
+          >
         </div>
       </div>
-    </div>
     ${!connectedToNode()
       ? html`
           <div class="connection-slot">
@@ -510,15 +455,14 @@ export function sendPlateContent() {
 export function sendPlate() {
   readLastTxLog();
   const sendButtonClass = walletUnlocked() ? "red-dot" : "grey-dot";
-  const dismissStatus = document.getElementById("dismissStatus");
-  if (dismissStatus && last_tx_log) {
-    const stamp = last_tx_log.timestamp;
-    dismissStatus.onclick = () => {
-      dismissedStatus.set(currentlySelectedWallet()?.primary_address ?? "", stamp);
-      const pa = currentlySelectedWallet()?.primary_address;
-      if (pa) void window.wallets?.dismissSendPlate({ primary_address: pa });
-    };
-  }
+  const stamp = last_tx_log?.timestamp;
+  const dismissStatus = () => {
+    const pa = currentlySelectedWallet()?.primary_address;
+    if (pa && stamp !== undefined)
+      void dismissSendNotices(undefined, pa).then((ok) => {
+        if (ok) dismissedStatus.set(pa, stamp);
+      });
+  };
 
   return html`<div class="plate">
     <style>
@@ -597,14 +541,21 @@ export function sendPlate() {
           ${sendButtonDotStyles}<span class="${sendButtonClass}"></span> SEND
         </span>`,
         sendButtonActive(),
+        async () => {
+          const pa = routeKey();
+          setSendError(pa);
+          await sendCallback().catch((error) => setSendError(pa, error));
+        },
       )}
       <div></div>
-      ${actionButton("reset-send", "RESET")}
+      ${actionButton("reset-send", "RESET", true, resetCallback)}
       <div class="result-lines">
         ${lastTxLogMessage
           ? html`<div class="status-line">
               <div class="${lastTxLogMessageClass}">${lastTxLogMessage}</div>
-              <span class="tool-action" id="dismissStatus">dismiss</span>
+              <span class="tool-action" id="dismissStatus" onclick=${dismissStatus}
+                >dismiss</span
+              >
             </div>`
           : ""}
       </div>

@@ -1,4 +1,4 @@
-import { cdp, debugHttp, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, holdMerchantReply, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet, mineTo, pointShopsAtRegtest, shopPaymentLinkId } from "./setup.js";
 // one slow tool send, then a second tool send.
 // the second send must not reach the node. the first tx log still locks the coinbase.
@@ -6,9 +6,10 @@ import { ensureHealthyWallet, mineTo, pointShopsAtRegtest, shopPaymentLinkId } f
 // usage: bun test/slow_node_tx_resend_reproduction.ts
 
 const DECOY = "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr";
+const SHOP_URL = "http://127.0.0.1:3003";
 
 await ensureHealthyWallet();
-await pointShopsAtRegtest("http://127.0.0.1:3003");
+await pointShopsAtRegtest(SHOP_URL);
 
 const held: { requestId: string; sessionId?: string }[] = [];
 const { ws, send } = await cdp((msg) => {
@@ -54,7 +55,7 @@ async function releaseHeld() {
 }
 
 async function openPayLink() {
-  const startUrl = `http://127.0.0.1:3003/pay/${shopPaymentLinkId()}`;
+  const startUrl = `${SHOP_URL}/pay/${shopPaymentLinkId()}`;
   console.log("checkout", startUrl);
   const nt: any = await send("Target.createTarget", { url: startUrl });
   const start = Date.now();
@@ -134,6 +135,7 @@ if ((await panel(`!!document.getElementById("send-action")`)) !== true) {
   await panelClick("send");
 }
 if (!(await waitSendReady())) throw new Error("first send was not ready");
+await using merchant = await holdMerchantReply(SHOP_URL);
 if ((await clickSend()) !== "clicked") throw new Error("first send button was not active");
 
 {
@@ -154,7 +156,7 @@ let hint = "";
   const start = Date.now();
   while (Date.now() - start < 10000) {
     const t = String(await panel(`document.body.innerText`) || "");
-    const line = t.split("\n").find((row) => row.includes("sent tx to node"));
+    const line = t.split("\n").find((row) => row.includes("awaiting node reply"));
     if (line) { hint = line.trim(); break; }
     await new Promise((r) => setTimeout(r, 200));
   }
@@ -162,9 +164,10 @@ let hint = "";
 console.log("hint:", hint || "(not shown)");
 if (!hint) {
   await releaseHeld();
-  throw new Error("sent tx to node was not on the send plate");
+  throw new Error("awaiting node reply was not on the send plate");
 }
 await releaseHeld();
+await merchant.release();
 {
   const start = Date.now();
   let done = "";

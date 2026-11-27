@@ -157,7 +157,7 @@ async function waitFor(elId: string): Promise<void> {
 }
 
 async function setInput(elId: string, value: string): Promise<void> {
-  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); if (typeof el.oninput === "function") el.oninput(); return 1; })()`);
+  await ev(`(() => { const el = document.getElementById(${JSON.stringify(elId)}); el.value = ${JSON.stringify(value)}; el.dispatchEvent(new Event("input", {bubbles:true})); return 1; })()`);
 }
 
 async function fieldValue(elId: string): Promise<string> {
@@ -436,10 +436,9 @@ async function main(): Promise<void> {
     if (!ui.unlocked) await clickId("fire");
     await ensurePlate("send");
     await waitFor("openCoinControlButton");
-    const ccLabel = await ev(`document.getElementById("openCoinControlButton").textContent || ""`);
-    if (String(ccLabel).includes("standard")) {
-      await clickId("openCoinControlButton");
-    }
+    // the mode group: leave coin control through "standard" when it is on
+    const ccOn = await ev(`document.getElementById("openCoinControlButton")?.getAttribute("aria-pressed") === "true"`);
+    if (ccOn) await clickId("send-mode-standard");
     await waitFor("amountInput");
     // each failed send mines more blocks and tries again. it fails after the last round.
     const ROUNDS = 4;
@@ -529,7 +528,8 @@ async function main(): Promise<void> {
       const opened = await poll(async () => text(), (x) => x.includes("select input") || x.includes("add output"), 10000, "coin control open");
       if (!opened) throw new Error("coin control did not open");
     }
-    await clickId("openCoinControlButton");
+    // the mode group: "standard" leaves coin control, "coin control" only opens it
+    await clickId("send-mode-standard");
     const closed = await poll(async () => text(), (x) => x.includes("coin control") && !x.includes("select input"), 10000, "coin control close");
     if (!closed) throw new Error("coin control did not close");
   }, async () => {

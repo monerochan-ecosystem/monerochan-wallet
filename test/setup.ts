@@ -1,9 +1,10 @@
 import { Database } from "bun:sqlite";
+import { walletRouteToString } from "@spirobel/seedphrase";
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { cdp, ensureSidePanel, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, ensureSidePanel, targetByUrl } from "./cdp.js";
 // Shared setup for browser tool-call tests. Ensures a healthy funded wallet
 // on a tall chain: resets on reorg, sets the node url, mines funding plus
 // decoy depth. Skips whatever is already fine. Prints what it does.
@@ -161,7 +162,6 @@ export async function resetWallet(): Promise<void> {
     const el = document.getElementById("wipeWallet");
     el.value = "DELETE ALL FILES";
     el.dispatchEvent(new Event("input", {bubbles:true}));
-    if (typeof el.oninput === "function") el.oninput();
     return 1;
   })()`);
   const wiped = await pollText((x) => x.includes("GENERATE SEEDPHRASE"), 60000, "wipe");
@@ -220,8 +220,8 @@ export async function useRegtestNodeBeforeRestart(): Promise<void> {
 }
 
 export async function reloadWalletBackground(): Promise<void> {
-  // The background worker keeps the old wallet until Brave starts again.
-  restartBrave();
+  if (process.env.SKIP_BRAVE === "1") await reloadExtension();
+  else restartBrave();
   await ensureSidePanel();
 }
 
@@ -378,9 +378,37 @@ export async function pointShopsAtRegtest(origin?: string) {
   );
 }
 
+// brave.sh restarts the browser, but keeps the unpacked extension it already loaded.
+// reload it, or a rebuilt bridge or sidebar keeps running the old code.
+export async function reloadExtension(): Promise<void> {
+  const { ws, send } = await cdp();
+  let targetId = "";
+  try {
+    targetId = (await send("Target.createTarget", { url: "chrome://extensions/" })).targetId;
+    await new Promise((r) => setTimeout(r, 1500));
+    const s = await send("Target.attachToTarget", { targetId, flatten: true });
+    const list: any[] = await (await fetch(debugHttp() + "/json/list")).json();
+    const id = String(list.map((x: any) => String(x.url)).find((url: string) => url.startsWith("chrome-extension://")) || "").split("/")[2];
+    if (!id) throw new Error("no extension id");
+    // do not await: the reload tears down the page that runs this call.
+    await send("Runtime.evaluate", {
+      expression: `chrome.developerPrivate.updateProfileConfiguration({ inDeveloperMode: true }).then(() => chrome.developerPrivate.reload(${JSON.stringify(id)})), 1`,
+      returnByValue: true,
+    }, s.sessionId);
+    console.log("extension reloaded", id.slice(0, 8));
+  } catch (error) {
+    console.log("extension reload skipped:", error instanceof Error ? error.message : String(error));
+  } finally {
+    if (targetId) await send("Target.closeTarget", { targetId }).catch(() => {});
+    ws.close();
+  }
+  await new Promise((r) => setTimeout(r, 2000));
+}
+
 export async function ensureHealthyWallet(): Promise<string> {
   startNodeAndBrowser();
-  await pointShopsAtRegtest();
+  if (!process.env.CHECKOUT_URL) await pointShopsAtRegtest();
+  await reloadExtension();
   await ensureSidePanel();
   await reviveSidebar();
   const h = await nodeHeight();
@@ -393,8 +421,7 @@ export async function ensureHealthyWallet(): Promise<string> {
     const made = await pollText((x) => x.includes("0 XMR"), 60000, "new wallet");
     if (!made) throw new Error("new wallet did not finish");
     await useRegtestNodeBeforeRestart();
-    restartBrave();
-    await ensureSidePanel();
+    await reloadWalletBackground();
   }
   // node url. skip the click when the worker is already connected.
   const connected = await panelEval(`window.wallets?.connectionStatusOpened?.isConnected === true`);
@@ -406,40 +433,22 @@ export async function ensureHealthyWallet(): Promise<string> {
   } else {
     console.log("node already connected");
   }
-  // fund + decoy depth
-  const addr = await panelEval(`window.wallets.wallets[0].primary_address`);
-  console.log("wallet", String(addr).slice(0, 12));
-  const bal = await panelText().then((x) => {
-    const digits = x.match(/(\d+\.\d+) XMR/)?.[1];
-    return digits ? parseFloat(digits) : 0;
-  });
-  if (!(bal > 0)) {
-    await mineTo(addr, 1);
-  }
-  // a short coinbase-only chain can leave too few unlocked decoys in a sample.
+  const route = walletRouteToString(await panelEval("window.walletRouteParams"));
+  const wallets = await panelEval("window.wallets.wallets.map(w => ({ address: w.primary_address, route: w.wallet_route }))");
+  const addr = (wallets.find((wallet: { route?: string }) => wallet.route === route) ?? wallets[0])?.address;
+  if (!addr) throw new Error("no wallet selected");
+  const balance = async () => BigInt(await panelEval(`String(window.wallets.wallets.find(w => w.primary_address === ${JSON.stringify(addr)}).amount)`));
+  if (await balance() === 0n) await mineTo(addr, 1);
   const height = await nodeHeight();
-  if (height < 10000) {
-    await mineTo(DECOY_ADDR, 10000 - height);
-  }
-  // unlock spending power, skip when already spendable
-  const spendable = await panelText().then((x) => {
-    const digits = x.match(/(\d+\.\d+) XMR/)?.[1];
-    return !!digits && parseFloat(digits) > 1;
-  });
-  if (spendable) {
-    console.log("already spendable, skipping unlock mining");
-    return addr;
-  }
+  if (height < 10000) await mineTo(DECOY_ADDR, 10000 - height);
+  if (await balance() > 1000000000000n) return addr;
+
   // a coinbase reward unlocks after 60 blocks.
-  for (let round = 0; round < 3; round++) {
-    await mineTo(DECOY_ADDR, 60);
-    const ok = await pollText((x) => {
-      const digits = x.match(/(\d+\.\d+) XMR/)?.[1];
-      return !!digits && parseFloat(digits) > 1;
-    }, 90000, "unlocked funds");
-    if (ok) break;
+  await mineTo(DECOY_ADDR, 60);
+  const deadline = Date.now() + 90000;
+  while (Date.now() < deadline) {
+    if (await balance() > 1000000000000n) return addr;
+    await Bun.sleep(250);
   }
-  const final = await panelText().then((x) => x.match(/(\d+\.\d+) XMR/)?.[1]);
-  console.log("funded, balance", final);
-  return addr;
+  throw new Error("selected wallet has insufficient unlocked funds");
 }

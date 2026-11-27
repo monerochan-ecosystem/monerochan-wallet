@@ -12,7 +12,7 @@ setDebugPort(PORT);
 const root = process.cwd();
 const started = spawnSync("bash", [
   resolve(root, "test/brave.sh"), "ensure",
-  "--profile", resolve(root, "testdata/fresh-install-profile"),
+  "--profile", resolve(root, process.env.FRESH_BRAVE_PROFILE || "testdata/fresh-install-profile"),
   "--port", String(PORT),
   "--log", resolve(root, "testdata/direct-tool-brave.log"),
 ], { stdio: "inherit" });
@@ -111,6 +111,21 @@ try {
       url === "about:blank" || url === "closed",
       "the toolconfirm page must close or become about:blank, got " + url,
     );
+    let fields;
+    for (let i = 0; i < 60; i++) {
+      fields = await evaluate(panel, `(() => {
+        const amount = document.getElementById("amountInput");
+        const address = document.getElementById("addressInput");
+        return { amount: amount?.value, address: address?.value, amountLocked: amount?.disabled,
+          addressLocked: address?.disabled, info: !!document.querySelector(".tool-info"),
+          modeSwitch: !!document.querySelector("#send-mode-standard, #openCoinControlButton"),
+          outputLabel: document.querySelector(".send-entry-fields")?.innerText.includes("output 1") };
+      })()`);
+      if (fields.info && fields.address === ADDRESS && fields.amount === "0.1") break;
+      await sleep(100);
+    }
+    assert.deepEqual(fields, { amount: "0.1", address: ADDRESS, amountLocked: true,
+      addressLocked: true, info: true, modeSwitch: false, outputLabel: false });
   });
 
   // the omnibox can turn a pasted monero: uri into a query on a known search engine.

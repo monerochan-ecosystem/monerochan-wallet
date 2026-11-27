@@ -2,7 +2,7 @@
 // no side effects on import.
 import { getToolUiByPermissions } from "@spirobel/monero-wallet-api/tools";
 import type { FoundTransaction, InvocationState, Output, TxLog } from "@spirobel/monero-wallet-api/unpacked";
-import { html, type MiniValue } from "../../../mininext/mininext";
+import { html, type MiniValue } from "@spirobel/mininext";
 
 export function formatTime(timestamp: number | string, block_timestamp = false) {
   const date = new Date(

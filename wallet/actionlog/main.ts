@@ -1,4 +1,4 @@
-import { html, renderRoot } from "../../mininext/mininext";
+import { html, renderRoot } from "@spirobel/mininext";
 import { initActionLogPage } from "./init";
 import { router } from "./router";
 

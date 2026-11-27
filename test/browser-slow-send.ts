@@ -1,8 +1,8 @@
-import { cdp, debugHttp, targetByUrl } from "./cdp.js";
+import { cdp, debugHttp, holdMerchantReply, targetByUrl } from "./cdp.js";
 import { ensureHealthyWallet, mineTo, pointShopsAtRegtest, shopPaymentLinkId } from "./setup.js";
 // tool 001 send with the node answer held.
 // cdp pauses send_raw_transaction on the offscreen document.
-// the side panel must show "sent tx to node" before that answer continues.
+// the side panel must show "awaiting node reply" before either reply continues.
 // usage: bun test/browser-slow-send.ts
 
 const DECOY = "47cYSGSjzWPX3KFEN9PaxT5zpWKgRtx568bazbGzt57ffBbUAQevjMk19sfZCrMB1RWHNJLbz1eKU63B77HpHwUVA6JGudr";
@@ -129,6 +129,7 @@ if ((await panel(`String(window.unlocked)`)) !== "true") await panelClick("fire"
   if (!ready) throw new Error("tool block never populated");
 }
 
+await using merchant = await holdMerchantReply(startUrl);
 const clicked = await panel(`(() => {
   const b = document.getElementById("send-action");
   if (!b || !b.classList.contains("action-button") || typeof b.onclick !== "function") return "not ready";
@@ -166,7 +167,7 @@ let hint = "";
   const start = Date.now();
   while (Date.now() - start < 10000) {
     const t = String(await panel(`document.body.innerText`) || "");
-    const line = t.split("\n").find((row) => row.includes("sent tx to node"));
+    const line = t.split("\n").find((row) => row.includes("awaiting node reply"));
     if (line) { hint = line.trim(); break; }
     await new Promise((r) => setTimeout(r, 200));
   }
@@ -176,12 +177,13 @@ if (!hint) {
   for (const row of held) {
     await send("Fetch.continueRequest", { requestId: row.requestId }, row.sessionId);
   }
-  throw new Error("sent tx to node was not on the send plate while the node was held");
+  throw new Error("awaiting node reply was not on the send plate while the node was held");
 }
 
 for (const row of held) {
   await send("Fetch.continueRequest", { requestId: row.requestId }, row.sessionId);
 }
+await merchant.release();
 console.log("node answer released");
 
 {
