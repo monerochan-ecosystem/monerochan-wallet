@@ -39,9 +39,11 @@ function neutralStatusMessage(message: string) {
 let nodeUrlInputValue: string | null = null;
 let startHeightInputValue: number | null | false = false; // null is a valid value so we use false as a placeholder
 let test_result = "";
+let testConnectionVersion = 0;
 let status_message: MiniHtmlString = empty_status_message;
 let openDevSettings = false;
 function updateNodeUrlCallback(event: Event) {
+  testConnectionVersion++;
   nodeUrlInputValue = (event.target as HTMLInputElement).value;
   test_result = "";
   status_message = empty_status_message;
@@ -56,6 +58,7 @@ function openDevSettingsHandler() {
   openDevSettings = !openDevSettings;
 }
 async function resetNodeUrlHandler() {
+  testConnectionVersion++;
   const settings = await openScanSettingsFile();
   nodeUrlInputValue = settings?.node_url || null;
   startHeightInputValue = settings?.start_height ?? null;
@@ -69,6 +72,7 @@ async function saveNodeUrlHandler() {
   if (!nodeUrl) return;
   const startHeight = startHeightInputValue === false ? null : startHeightInputValue;
   if (startHeight !== null && startHeight < 0) return;
+  testConnectionVersion++;
   nodeUrl = await nodeUrlToSave(nodeUrl);
   if (!canStoreNodeUrl(nodeUrl)) {
     status_message = negativeStatusMessage("Node URL is not valid");
@@ -90,7 +94,9 @@ async function sendTestRequestHandler() {
   let nodeUrl = (nodeUrlInputValue ?? "").trim();
   if (nodeUrl.endsWith("/")) nodeUrl = nodeUrl.slice(0, -1);
   if (!nodeUrl) return;
+  const version = ++testConnectionVersion;
   const found = await findNodeInfo(nodeUrl);
+  if (version !== testConnectionVersion) return;
   if (!found) {
     status_message = negativeStatusMessage(`get_info response failed`);
     test_result = "";

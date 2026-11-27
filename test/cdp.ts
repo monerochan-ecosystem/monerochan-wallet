@@ -66,7 +66,7 @@ export async function targetByUrl(match: string): Promise<{ id: string; url: str
 export async function holdMerchantReply(checkoutUrl: string) {
   const pages = new Map<string, Promise<unknown>>();
   const held: { requestId: string; sessionId: string }[] = [];
-  const urlPattern = new URL("/handover?checkoutId=*", checkoutUrl).href;
+  const urlPattern = new URL("/monerochan001/*", checkoutUrl).href;
   let releasing = false;
   const browser = await cdp((event) => {
     if (event.method === "Target.attachedToTarget") {
@@ -81,7 +81,7 @@ export async function holdMerchantReply(checkoutUrl: string) {
     } else if (event.method === "Target.detachedFromTarget") {
       pages.delete(event.params.sessionId);
     } else if (event.method === "Fetch.requestPaused" && event.sessionId) {
-      if (releasing) {
+      if (releasing || event.params.request.method !== "POST") {
         browser.send("Fetch.continueResponse", { requestId: event.params.requestId }, event.sessionId).catch(() => {});
       } else {
         held.push({ requestId: event.params.requestId, sessionId: event.sessionId });
